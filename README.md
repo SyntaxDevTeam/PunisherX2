@@ -10,8 +10,7 @@ Projekt koncentruje się na całkowicie asynchronicznej logice i cache Caffeine 
 ## Wymagania rozwojowe
 - Java 21
 - Kotlin 2.2.20
-- Gradle 8.11 (wrapper `./gradlew`; migracja do 9.1 nastąpi po udostępnieniu dystrybucji)
-- Pobierz `gradle/wrapper/gradle-wrapper.jar` lokalnie – plik jest wykluczony z repozytorium i musi zostać dodany ręcznie przed uruchomieniem poleceń Gradle.
+- Gradle 9.1.0
 
 ## Uruchamianie testów
 ```bash
