@@ -4,7 +4,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
     kotlin("jvm") version "2.2.20" apply false
-    id("com.gradleup.shadow") version "9.1.0" apply false
+    id("com.gradleup.shadow") version "9.2.1" apply false
     `java-library`
 }
 
