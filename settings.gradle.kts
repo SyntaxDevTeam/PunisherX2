@@ -1,6 +1,14 @@
-rootProject.name = "punisherx2"
+rootProject.name = "PunisherX"
+pluginManagement {
+    repositories {
+        // Twoje repozytoria z pluginami:
+        maven("https://nexus.syntaxdevteam.pl/repository/maven-releases/")
+        maven("https://nexus.syntaxdevteam.pl/repository/maven-snapshots/")
 
-include(
-    "punisherx2-api",
-    "punisherx2-plugin"
-)
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+}
