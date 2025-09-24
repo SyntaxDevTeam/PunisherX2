@@ -3,6 +3,7 @@
 ## 1. Cel i zakres
 * **Cel:** zaprojektowanie PunisherX2 (PunisherX 2.0) jako następcy obecnego pluginu, którego kod źródłowy do wglądu znajduje się w katalogu "legacy", z naciskiem na eliminację blokowania głównego wątku, minimalizację dostępu do dysku i izolację od powolnych połączeń zewnętrznych.
 * **Zakres:** wszystkie moduły (komendy, zdarzenia, GUI, placeholdery, integracje zewnętrzne, migracje danych) muszą spełniać poniższe warunki krytyczne przed dopuszczeniem do produkcji.
+* **Stan narzędzi:** do czasu publikacji oficjalnej dystrybucji Gradle 9.1 utrzymujemy wrapper 8.11, zachowując gotową konfigurację do natychmiastowej migracji.
 
 ## 2. Warunki krytyczne (must-have)
 1. **Brak synchronicznych operacji I/O:** żadna ścieżka wykonania na głównym wątku nie może zawierać operacji dyskowych, sieciowych ani zapytań SQL. Wszelkie operacje tego typu muszą być delegowane do zadań asynchronicznych (scheduler Folia/Paper/Bukkit lub dedykowany `ExecutorService`).
@@ -17,7 +18,8 @@
 * **Warstwa API / jądra pluginu:**
     * Publiczny moduł `PunisherX2API` wystawia kontrakty do obsługi kar, danych IP, statystyk oraz integracji GUI, będąc jedynym wejściem do logiki domenowej (zarówno dla modułów wewnętrznych, jak i zewnętrznych pluginów).
     * Wszystkie metody API są w pełni asynchroniczne (`CompletableFuture`, `Publisher`) i zwracają obiekty tylko po scaleniu danych z cache Caffeine; bezpośredni dostęp do repozytoriów jest zabroniony.
-    * API udostępnia strumień zdarzeń domenowych (np. `PunishmentAppliedEvent`, `PunishmentRevokedEvent`) emitowanych poza wątkiem głównym z możliwością subskrypcji przez inne pluginy.
+    * API udostępnia strumień zdarzeń domenowych (np. `PunishmentAppliedEvent`, `PunishmentRevokedEvent`) jako `Flow.Publisher<PunishmentEvent>` emitowany poza wątkiem głównym. Utrzymujemy bufor z `SubmissionPublisher` osadzony na dedykowanym executorze, zapewniając brak blokowania oraz łatwe mostkowanie do rozwiązań reaktywnych.
+    * `PunisherX2ApiProvider` rejestruje aktywną instancję API, a plugin publikuje ją również w `Bukkit.getServicesManager()` z priorytetem `NORMAL`, aby inne moduły mogły pozyskiwać implementację w trakcie `onEnable`. Integracja z deklaratywnym `services.yml` zostanie dodana po ustabilizowaniu schematu w Paper.
     * Interfejsy API objęte są stabilnym wersjonowaniem semantycznym i kontraktami bezpieczeństwa (kontrola uprawnień, walidacja danych wejściowych, anonimizacja wrażliwych pól).
 * **Warstwa dostępu do danych:**
     * Repozytoria blokują się wyłącznie na wątkach roboczych. Wszystkie metody zwracają `CompletableFuture<T>` lub `Publisher<T>`.

@@ -1,0 +1,7 @@
+name: PunisherX2
+version: ${version}
+main: net.punisherx2.plugin.PunisherX2Plugin
+author: PunisherX2 Team
+depend: []
+api-version: "1.20"
+folia-supported: true
