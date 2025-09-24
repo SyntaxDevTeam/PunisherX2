@@ -1,6 +1,6 @@
 # PunisherX2
 
-PunisherX2 to nowa generacja pluginu moderacyjnego zaprojektowana w oparciu o plan z [`docs/PunisherX2-plan.md`](docs/PunisherX2-plan.md).
+PunisherX2 to nowa generacja pluginu PunisherX: Zaawansowany system kar dla serwerów Minecraft z ostrzeżeniami, banami i wyciszeniami. projekt budowany na podstawie planu z [`docs/PunisherX2-plan.md`](docs/PunisherX2-plan.md).
 Projekt koncentruje się na całkowicie asynchronicznej logice i cache Caffeine 3.2.2, aby wyeliminować blokady wątku głównego.
 
 ## Struktura modułów
