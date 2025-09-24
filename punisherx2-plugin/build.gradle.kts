@@ -10,7 +10,7 @@ dependencies {
 
     implementation("com.github.ben-manes.caffeine:caffeine:3.2.2")
 
-    compileOnly("io.papermc.paper:paper-api:1.21.3-R0.1-SNAPSHOT")
+    compileOnly("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
 
     testImplementation(kotlin("test"))
     testImplementation(platform("org.junit:junit-bom:5.11.0"))
