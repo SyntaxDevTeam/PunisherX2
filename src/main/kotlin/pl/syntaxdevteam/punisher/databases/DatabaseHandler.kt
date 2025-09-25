@@ -243,7 +243,7 @@ class DatabaseHandler(private val plugin: PunisherX) {
         }
 
         return try {
-            val rows = query(sql, *params.toTypedArray()) { rs ->
+            query(sql, *params.toTypedArray()) { rs ->
                 PunishmentData(
                     rs.getInt("id"),
                     uuid,
@@ -254,11 +254,7 @@ class DatabaseHandler(private val plugin: PunisherX) {
                     rs.getString("name"),
                     rs.getString("operator")
                 )
-            }
-            val punishmentsToRemove = rows.filterNot { plugin.punishmentManager.isPunishmentActive(it) }
-            punishmentsToRemove.forEach { removePunishment(it.uuid, it.type) }
-
-            rows.filter { plugin.punishmentManager.isPunishmentActive(it) }
+            }.filter { plugin.punishmentManager.isPunishmentActive(it) }
         } catch (e: Exception) {
             logger.err("Failed to get punishments for UUID: $uuid. ${e.message}")
             emptyList()        }
@@ -396,6 +392,14 @@ class DatabaseHandler(private val plugin: PunisherX) {
         } catch (e: Exception) {
             logger.err("Failed to get banned players: ${e.message}")
             mutableListOf()
+        }
+    }
+
+    fun purgeExpiredPunishments(now: Long) {
+        try {
+            execute("DELETE FROM punishments WHERE endTime <> -1 AND endTime < ?", now)
+        } catch (e: Exception) {
+            logger.warning("Failed to purge expired punishments: ${e.message}")
         }
     }
 
