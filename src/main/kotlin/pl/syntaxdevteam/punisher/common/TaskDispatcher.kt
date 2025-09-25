@@ -18,7 +18,7 @@ class TaskDispatcher(private val plugin: PunisherX) : AutoCloseable {
         determinePoolSize(),
         { runnable ->
             val thread = Executors.defaultThreadFactory().newThread(runnable)
-            thread.name = "PunisherX-Async-${thread.id}"
+            thread.name = "PunisherX-Async-${thread.threadId()}"
             thread.isDaemon = true
             thread
         }
