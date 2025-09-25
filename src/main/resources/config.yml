@@ -16,6 +16,10 @@ database:
 playerCache:
   # Choose where player IP information is stored: "file" or "database"
   storage: "file"
+  # Optional 16 character key used for encrypting cached player information.
+  # Leave empty to reuse the value saved in plugins/PunisherX/player-cache.key
+  # or to fall back to the legacy default.
+  secretKey: ""
 
 performance:
   cache:

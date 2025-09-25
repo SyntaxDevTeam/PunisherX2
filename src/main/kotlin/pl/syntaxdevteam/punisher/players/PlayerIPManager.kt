@@ -27,7 +27,8 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
     )
 
     private val cacheFile = File(plugin.dataFolder, "cache")
-    private val secretKey: Key = generateKey()
+    private val keyFile = File(plugin.dataFolder, "player-cache.key")
+    private val secretKey: Key = loadOrCreateKey()
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
 
     private val useDatabase = plugin.config.getString("playerCache.storage")
@@ -104,23 +105,87 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
         plugin.logger.debug("Encrypted data saved -> ${serializePlain(info)}")
     }
 
-    private fun generateKey(): Key {
-        val keyString = System.getenv("AES_KEY") ?: "1234567890ABCDEF" // test fallback
+    private fun loadOrCreateKey(): Key {
+        val envKey = validatedKeyValue(System.getenv("AES_KEY")?.trim(), "environment variable AES_KEY")
+        if (envKey != null) {
+            return toSecretKey(envKey)
+        }
 
-        require(keyString.length == 16) { "AES key must be exactly 16 characters long" }
-        return SecretKeySpec(keyString.toByteArray(UTF_8), "AES")
+        val configKey = validatedKeyValue(plugin.config.getString("playerCache.secretKey")?.trim(), "playerCache.secretKey")
+        if (configKey != null) {
+            persistKey(configKey)
+            return toSecretKey(configKey)
+        }
+
+        val persistedKey = loadPersistedKey()
+        if (persistedKey != null) {
+            return toSecretKey(persistedKey)
+        }
+
+        persistKey(DEFAULT_KEY)
+        return toSecretKey(DEFAULT_KEY)
+    }
+
+    private fun validatedKeyValue(rawKey: String?, source: String): String? {
+        if (rawKey.isNullOrBlank()) {
+            return null
+        }
+
+        val value = rawKey.takeIf { it.length == REQUIRED_KEY_LENGTH }
+        if (value == null) {
+            plugin.logger.err("Ignoring $source because it is not exactly $REQUIRED_KEY_LENGTH characters long")
+            return null
+        }
+
+        return value
+    }
+
+    private fun loadPersistedKey(): String? {
+        if (!keyFile.exists()) {
+            return null
+        }
+
+        val rawKey = keyFile.readText().trim()
+        val persisted = validatedKeyValue(rawKey, keyFile.name)
+        if (persisted == null) {
+            plugin.logger.err("Stored AES key at ${keyFile.absolutePath} is invalid and will be regenerated")
+            keyFile.delete()
+        }
+        return persisted
+    }
+
+    private fun persistKey(secret: String) {
+        if (System.getenv("AES_KEY")?.isNotBlank() == true) {
+            return
+        }
+
+        keyFile.parentFile?.let { parent ->
+            if (!parent.exists()) {
+                parent.mkdirs()
+            }
+        }
+        if (!keyFile.exists() || keyFile.readText() != secret) {
+            keyFile.writeText(secret)
+        }
+    }
+
+    private fun toSecretKey(value: String): Key = SecretKeySpec(value.toByteArray(UTF_8), "AES")
+
+    private companion object {
+        private const val REQUIRED_KEY_LENGTH = 16
+        private const val DEFAULT_KEY = "1234567890ABCDEF"
     }
 
 
     private fun encrypt(data: String): String {
         val cipher = Cipher.getInstance("AES")
         cipher.init(Cipher.ENCRYPT_MODE, secretKey)
-        return cipher.doFinal(data.toByteArray(UTF_8)).joinToString("") { "%02x".format(it) }
+        return cipher.doFinal(data.toByteArray(UTF_8)).toHexString()
     }
 
     private fun decrypt(data: String): String {
         return try {
-            val bytes = data.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            val bytes = hexStringToByteArray(data)
             val cipher = Cipher.getInstance("AES")
             cipher.init(Cipher.DECRYPT_MODE, secretKey)
             String(cipher.doFinal(bytes), UTF_8)
