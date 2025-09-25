@@ -1,11 +1,17 @@
 package pl.syntaxdevteam.punisher.players
 
-import pl.syntaxdevteam.punisher.PunisherX
 import org.bukkit.event.player.PlayerJoinEvent
+import pl.syntaxdevteam.punisher.PunisherX
 import java.io.File
 import java.security.Key
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 import kotlin.text.Charsets.UTF_8
@@ -29,11 +35,27 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
 
     private val separator = "|"
 
+    private val cache = ConcurrentHashMap<String, PlayerInfo>()
+    private val pendingInsertions = ConcurrentLinkedQueue<PlayerInfo>()
+    private val rewriteRequested = AtomicBoolean(false)
+    private val flushScheduled = AtomicBoolean(false)
+
+    private val cacheLoadFuture: CompletableFuture<Unit>
+
     init {
         if (!useDatabase && !cacheFile.exists()) {
             cacheFile.parentFile.mkdirs()
             cacheFile.createNewFile()
         }
+
+        cacheLoadFuture = plugin.taskDispatcher
+            .supplyAsync {
+                loadCacheFromStorage()
+            }
+            .exceptionally { throwable ->
+                plugin.logger.err("Failed to load player cache: ${throwable.message}")
+                Unit
+            }
     }
 
     fun handlePlayerJoin(event: PlayerJoinEvent) {
@@ -43,6 +65,7 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
         val playerIP = player.address?.address?.hostAddress
 
         if (playerIP != null) {
+            awaitCacheInitialized()
             val country = geoIPHandler.getCountry(playerIP)
             val city = geoIPHandler.getCity(playerIP)
             val geoLocation = "$city, $country"
@@ -62,10 +85,23 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
     }
 
     private fun savePlayerInfo(playerName: String, playerUUID: String, playerIP: String, geoLocation: String, lastUpdated: String) {
-        val dataLine = "$playerName$separator$playerUUID$separator$playerIP$separator$geoLocation$separator$lastUpdated"
-        val encryptedData = encrypt(dataLine)
-        appendLine(encryptedData)
-        plugin.logger.debug("Encrypted data saved -> $dataLine")
+        val info = PlayerInfo(
+            playerName = playerName,
+            playerUUID = playerUUID,
+            playerIP = playerIP,
+            geoLocation = geoLocation,
+            lastUpdated = lastUpdated
+        )
+
+        val key = cacheKey(playerUUID, playerIP)
+        val previous = cache.putIfAbsent(key, info)
+
+        if (previous == null) {
+            pendingInsertions.add(info)
+            scheduleFlush()
+        }
+
+        plugin.logger.debug("Encrypted data saved -> ${serializePlain(info)}")
     }
 
     private fun generateKey(): Key {
@@ -95,15 +131,8 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
     }
 
     fun getAllDecryptedRecords(): List<PlayerInfo> {
-        return readLines().mapNotNull { line ->
-            try {
-                val decrypted = decrypt(line)
-                parsePlayerInfo(decrypted)
-            } catch (e: Exception) {
-                plugin.logger.err("Error decrypting line: $line -> $e")
-                null
-            }
-        }
+        awaitCacheInitialized()
+        return cache.values.map { it.copy() }
     }
 
     fun getPlayerIPByName(playerName: String): String? {
@@ -139,35 +168,38 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
     }
 
     fun deletePlayerInfo(playerUUID: UUID) {
-        val lines = readLines()
-        val filtered = lines.filter { line ->
-            val info = parsePlayerInfo(decrypt(line))
-            info?.playerUUID != playerUUID.toString()
+        awaitCacheInitialized()
+        val targetUuid = playerUUID.toString()
+        var removed = false
+
+        cache.entries.removeIf { entry ->
+            val matches = entry.value.playerUUID.equals(targetUuid, ignoreCase = true)
+            if (matches) {
+                removed = true
+            }
+            matches
         }
-        cacheFile.writeText("")
-        filtered.forEach { cacheFile.appendText("$it\n") }
-        plugin.logger.debug("Removed player info for UUID: $playerUUID")
+
+        if (removed) {
+            scheduleFlush(forceRewrite = true)
+            plugin.logger.debug("Removed player info for UUID: $playerUUID")
+        }
     }
 
     private fun searchCache(playerName: String, playerUUID: String, playerIP: String): PlayerInfo? {
         plugin.logger.debug("Searching cache")
-        val lines = readLines()
-        plugin.logger.debug("Number of lines in cache: ${lines.size}")
-        for (line in lines) {
-            val decryptedLine = decrypt(line)
-            plugin.logger.debug("Decrypted line: $decryptedLine")
-            val info = parsePlayerInfo(decryptedLine)
-            if (info != null &&
-                (playerName.isEmpty() || info.playerName.equals(playerName, ignoreCase = true)) &&
+        awaitCacheInitialized()
+        val match = cache.values.firstOrNull { info ->
+            (playerName.isEmpty() || info.playerName.equals(playerName, ignoreCase = true)) &&
                 (playerUUID.isEmpty() || info.playerUUID.equals(playerUUID, ignoreCase = true)) &&
                 (playerIP.isEmpty() || info.playerIP.equals(playerIP, ignoreCase = true))
-            ) {
-                plugin.logger.debug("Match found: $decryptedLine")
-                return info
-            }
         }
-        plugin.logger.debug("No match found in cache")
-        return null
+        return match?.also {
+            plugin.logger.debug("Match found: ${serializePlain(it)}")
+        } ?: run {
+            plugin.logger.debug("No match found in cache")
+            null
+        }
     }
 
 
@@ -191,19 +223,101 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
         }
     }
 
+    private fun loadCacheFromStorage() {
+        val lines = readLines()
+        cache.clear()
+        lines.forEach { line ->
+            val decrypted = decrypt(line)
+            val info = parsePlayerInfo(decrypted)
+            if (info != null) {
+                cache[cacheKey(info.playerUUID, info.playerIP)] = info
+            }
+        }
+        plugin.logger.debug("Loaded ${cache.size} player cache entries into memory")
+    }
+
+    private fun scheduleFlush(forceRewrite: Boolean = false) {
+        if (forceRewrite) {
+            rewriteRequested.set(true)
+        }
+
+        if (flushScheduled.compareAndSet(false, true)) {
+            plugin.taskDispatcher.runAsync {
+                try {
+                    flushPendingWrites()
+                } finally {
+                    flushScheduled.set(false)
+                    if (rewriteRequested.get() || pendingInsertions.isNotEmpty()) {
+                        scheduleFlush()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun flushPendingWrites() {
+        if (rewriteRequested.getAndSet(false)) {
+            val snapshot = cache.values.map { encrypt(serializePlain(it)) }
+            pendingInsertions.clear()
+            overwriteLines(snapshot)
+            return
+        }
+
+        val batch = mutableListOf<String>()
+        while (true) {
+            val info = pendingInsertions.poll() ?: break
+            batch += encrypt(serializePlain(info))
+        }
+
+        if (batch.isNotEmpty()) {
+            appendLines(batch)
+        }
+    }
+
     private fun readLines(): List<String> =
         if (useDatabase) plugin.databaseHandler.getPlayerCacheLines() else cacheFile.readLines()
 
-    private fun appendLine(encryptedData: String) {
-        if (useDatabase) plugin.databaseHandler.savePlayerCacheLine(encryptedData)
-        else cacheFile.appendText("$encryptedData\n")
+    private fun appendLines(encryptedData: List<String>) {
+        if (useDatabase) {
+            encryptedData.forEach { plugin.databaseHandler.savePlayerCacheLine(it) }
+        } else if (encryptedData.isNotEmpty()) {
+            val text = buildString {
+                encryptedData.forEach { line ->
+                    append(line)
+                    append('\n')
+                }
+            }
+            cacheFile.appendText(text)
+        }
     }
 
     private fun overwriteLines(lines: List<String>) {
         if (useDatabase) plugin.databaseHandler.overwritePlayerCache(lines)
         else {
             cacheFile.writeText("")
-            lines.forEach { cacheFile.appendText("$it\n") }
+            appendLines(lines)
+        }
+    }
+
+    private fun cacheKey(playerUUID: String, playerIP: String): String {
+        return playerUUID.lowercase(Locale.ROOT) + separator + playerIP.lowercase(Locale.ROOT)
+    }
+
+    private fun serializePlain(info: PlayerInfo): String {
+        return listOf(
+            info.playerName,
+            info.playerUUID,
+            info.playerIP,
+            info.geoLocation,
+            info.lastUpdated
+        ).joinToString(separator)
+    }
+
+    private fun awaitCacheInitialized() {
+        try {
+            cacheLoadFuture.join()
+        } catch (throwable: Throwable) {
+            plugin.logger.err("Player cache initialization failed: ${throwable.message}")
         }
     }
 }
