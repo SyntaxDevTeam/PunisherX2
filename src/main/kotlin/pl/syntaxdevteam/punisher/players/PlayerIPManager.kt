@@ -4,6 +4,8 @@ import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
 import org.bukkit.event.player.PlayerJoinEvent
 import pl.syntaxdevteam.punisher.PunisherX
+import pl.syntaxdevteam.punisher.common.thenOnMainThread
+import pl.syntaxdevteam.punisher.players.GeoIPHandler.GeoLocation
 import java.io.File
 import java.security.Key
 import java.text.SimpleDateFormat
@@ -12,6 +14,7 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
@@ -68,16 +71,30 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
 
         if (playerIP != null) {
             awaitCacheInitialized()
-            val country = geoIPHandler.getCountry(playerIP)
-            val city = geoIPHandler.getCity(playerIP)
-            val geoLocation = "$city, $country"
-            val lastUpdated = dateFormat.format(Date())
 
-            if (getPlayerInfo(playerName, playerUUID, playerIP) == null) {
-                savePlayerInfo(playerName, playerUUID, playerIP, geoLocation, lastUpdated)
-                plugin.logger.debug("Saved player info -> playerName: $playerName, playerUUID: $playerUUID, playerIP: $playerIP, geoLocation: $geoLocation, lastUpdated: $lastUpdated")
+            val dispatcher = plugin.taskDispatcher
+            val lookupFuture = if (geoIPHandler.isEnabled()) {
+                dispatcher
+                    .supplyAsync { geoIPHandler.lookup(playerIP) }
+                    .orTimeout(1500, TimeUnit.MILLISECONDS)
+                    .exceptionally { throwable ->
+                        plugin.logger.debug("GeoIP lookup failed for $playerIP: ${throwable.message}")
+                        GeoLocation.UNKNOWN
+                    }
             } else {
-                plugin.logger.debug("Player info already exists -> playerName: $playerName, playerUUID: $playerUUID, playerIP: $playerIP, geoLocation: $geoLocation, lastUpdated: $lastUpdated")
+                CompletableFuture.completedFuture(GeoLocation.UNKNOWN)
+            }
+
+            lookupFuture.thenOnMainThread(dispatcher) { location ->
+                val geoLocation = location.asDisplay()
+                val lastUpdated = dateFormat.format(Date())
+
+                if (getPlayerInfo(playerName, playerUUID, playerIP) == null) {
+                    savePlayerInfo(playerName, playerUUID, playerIP, geoLocation, lastUpdated)
+                    plugin.logger.debug("Saved player info -> playerName: $playerName, playerUUID: $playerUUID, playerIP: $playerIP, geoLocation: $geoLocation, lastUpdated: $lastUpdated")
+                } else {
+                    plugin.logger.debug("Player info already exists -> playerName: $playerName, playerUUID: $playerUUID, playerIP: $playerIP, geoLocation: $geoLocation, lastUpdated: $lastUpdated")
+                }
             }
         }
     }

@@ -87,6 +87,7 @@ class PluginInitializer(private val plugin: PunisherX) {
         plugin.timeHandler = TimeHandler(plugin)
         plugin.punishmentManager = PunishmentManager()
         plugin.geoIPHandler = GeoIPHandler(plugin)
+        plugin.geoIPHandler.initializeAsync(plugin.taskDispatcher)
         plugin.cache = PunishmentCache(plugin)
         plugin.punishmentService = PunishmentService(plugin, plugin.databaseHandler, plugin.taskDispatcher)
         plugin.punishmentService.refreshConfiguration()

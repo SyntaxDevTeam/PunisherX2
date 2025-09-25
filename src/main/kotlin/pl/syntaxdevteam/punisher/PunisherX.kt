@@ -171,6 +171,7 @@ class PunisherX : JavaPlugin(), Listener {
         HandlerList.unregisterAll(playerJoinListener)
         HandlerList.unregisterAll(punishmentChecker)
         geoIPHandler = GeoIPHandler(this)
+        geoIPHandler.initializeAsync(taskDispatcher)
         playerIPManager = PlayerIPManager(this, geoIPHandler)
         punishmentChecker = PunishmentChecker(this)
         playerJoinListener = PlayerJoinListener(playerIPManager, punishmentChecker)
