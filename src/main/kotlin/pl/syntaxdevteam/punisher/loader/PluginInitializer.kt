@@ -13,6 +13,7 @@ import pl.syntaxdevteam.punisher.basic.TimeHandler
 import pl.syntaxdevteam.punisher.commands.CommandManager
 import pl.syntaxdevteam.punisher.common.CommandLoggerPlugin
 import pl.syntaxdevteam.punisher.common.ConfigHandler
+import pl.syntaxdevteam.punisher.common.TaskDispatcher
 import pl.syntaxdevteam.punisher.databases.DatabaseHandler
 import pl.syntaxdevteam.punisher.gui.interfaces.GUIHandler
 import pl.syntaxdevteam.punisher.hooks.DiscordWebhook
@@ -22,6 +23,7 @@ import pl.syntaxdevteam.punisher.listeners.ModernLoginListener
 import pl.syntaxdevteam.punisher.listeners.PlayerJoinListener
 import pl.syntaxdevteam.punisher.placeholders.PlaceholderHandler
 import pl.syntaxdevteam.punisher.players.*
+import pl.syntaxdevteam.punisher.services.PunishmentService
 import java.io.File
 import java.util.Locale
 
@@ -81,16 +83,20 @@ class PluginInitializer(private val plugin: PunisherX) {
     private fun setupHandlers() {
         plugin.messageHandler = SyntaxCore.messages
         plugin.pluginsManager = SyntaxCore.pluginManagerx
+        plugin.taskDispatcher = TaskDispatcher(plugin)
         plugin.timeHandler = TimeHandler(plugin)
         plugin.punishmentManager = PunishmentManager()
         plugin.geoIPHandler = GeoIPHandler(plugin)
         plugin.cache = PunishmentCache(plugin)
-        plugin.punisherXApi = PunisherXApiImpl(plugin.databaseHandler)
+        plugin.punishmentService = PunishmentService(plugin, plugin.databaseHandler, plugin.taskDispatcher)
+        plugin.punishmentService.refreshConfiguration()
+        plugin.punisherXApi = PunisherXApiImpl(plugin.databaseHandler, plugin.taskDispatcher)
         plugin.hookHandler = HookHandler(plugin)
         plugin.discordWebhook = DiscordWebhook(plugin)
         plugin.playerIPManager = PlayerIPManager(plugin, plugin.geoIPHandler)
         plugin.punishmentChecker = PunishmentChecker(plugin)
         checkLegacyPlaceholders()
+        plugin.refreshServerNameAsync()
     }
 
     /**

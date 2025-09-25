@@ -1,25 +1,29 @@
 package pl.syntaxdevteam.punisher.api
 
+import pl.syntaxdevteam.punisher.common.TaskDispatcher
 import pl.syntaxdevteam.punisher.databases.DatabaseHandler
 import pl.syntaxdevteam.punisher.databases.PunishmentData
 import java.util.concurrent.CompletableFuture
 
-class PunisherXApiImpl(private val databaseHandler: DatabaseHandler) : PunisherXApi {
+class PunisherXApiImpl(
+    private val databaseHandler: DatabaseHandler,
+    private val dispatcher: TaskDispatcher
+) : PunisherXApi {
 
     override fun getLastTenPunishmentHistory(uuid: String): CompletableFuture<List<PunishmentData>> {
-        return CompletableFuture.supplyAsync {
+        return dispatcher.supplyAsync {
             databaseHandler.getPunishmentHistory(uuid, limit = 10)
         }
     }
 
     override fun getLastTenActivePunishments(uuid: String): CompletableFuture<List<PunishmentData>> {
-        return CompletableFuture.supplyAsync {
+        return dispatcher.supplyAsync {
             databaseHandler.getPunishments(uuid, limit = 10)
         }
     }
 
     override fun getActivePunishments(uuid: String, type: String?): CompletableFuture<List<PunishmentData>> {
-        return CompletableFuture.supplyAsync {
+        return dispatcher.supplyAsync {
             val allPunishments = databaseHandler.getPunishments(uuid)
             if (type == null || type.equals("ALL", ignoreCase = true)) {
                 allPunishments
@@ -30,7 +34,7 @@ class PunisherXApiImpl(private val databaseHandler: DatabaseHandler) : PunisherX
     }
 
     override fun getPunishmentHistory(uuid: String, type: String?): CompletableFuture<List<PunishmentData>> {
-        return CompletableFuture.supplyAsync {
+        return dispatcher.supplyAsync {
             val allPunishmentHistory = databaseHandler.getPunishmentHistory(uuid)
             if (type == null || type.equals("ALL", ignoreCase = true)) {
                 allPunishmentHistory
@@ -42,19 +46,19 @@ class PunisherXApiImpl(private val databaseHandler: DatabaseHandler) : PunisherX
     }
 
     override fun getBannedPlayers(limit: Int, offset: Int): CompletableFuture<List<PunishmentData>> {
-        return CompletableFuture.supplyAsync {
+        return dispatcher.supplyAsync {
             databaseHandler.getBannedPlayers(limit, offset)
         }
     }
 
     override fun getHistoryBannedPlayers(limit: Int, offset: Int): CompletableFuture<List<PunishmentData>> {
-        return CompletableFuture.supplyAsync {
+        return dispatcher.supplyAsync {
             databaseHandler.getHistoryBannedPlayers(limit, offset)
         }
     }
 
     override fun getJailedPlayers(limit: Int, offset: Int): CompletableFuture<List<PunishmentData>> {
-        return CompletableFuture.supplyAsync {
+        return dispatcher.supplyAsync {
             databaseHandler.getJailedPlayers(limit, offset)
         }
     }

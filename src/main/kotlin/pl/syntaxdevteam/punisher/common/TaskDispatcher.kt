@@ -1,0 +1,75 @@
+package pl.syntaxdevteam.punisher.common
+
+import org.bukkit.Bukkit
+import pl.syntaxdevteam.punisher.PunisherX
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executor
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+/**
+ * Coordinates asynchronous work for the plugin while respecting the Bukkit
+ * threading model and Folia's schedulers.
+ */
+class TaskDispatcher(private val plugin: PunisherX) : AutoCloseable {
+
+    private val asyncExecutor: ExecutorService = Executors.newFixedThreadPool(
+        determinePoolSize(),
+        { runnable ->
+            val thread = Executors.defaultThreadFactory().newThread(runnable)
+            thread.name = "PunisherX-Async-${thread.id}"
+            thread.isDaemon = true
+            thread
+        }
+    )
+
+    private val syncExecutor = Executor { runnable ->
+        if (Bukkit.isPrimaryThread()) {
+            runnable.run()
+        } else {
+            TeleportUtils.runSync(plugin, Runnable { runnable.run() })
+        }
+    }
+
+    private fun determinePoolSize(): Int {
+        val processors = Runtime.getRuntime().availableProcessors()
+        return when {
+            processors <= 2 -> 2
+            processors >= 8 -> processors / 2
+            else -> processors - 1
+        }
+    }
+
+    fun runAsync(task: () -> Unit): CompletableFuture<Void> {
+        return CompletableFuture.runAsync(task, asyncExecutor)
+    }
+
+    fun <T> supplyAsync(task: () -> T): CompletableFuture<T> {
+        return CompletableFuture.supplyAsync(task, asyncExecutor)
+    }
+
+    fun runSync(task: () -> Unit) {
+        syncExecutor.execute(task)
+    }
+
+    override fun close() {
+        asyncExecutor.shutdown()
+        if (!asyncExecutor.awaitTermination(250, TimeUnit.MILLISECONDS)) {
+            asyncExecutor.shutdownNow()
+        }
+    }
+}
+
+fun <T> CompletableFuture<T>.thenOnMainThread(dispatcher: TaskDispatcher, consumer: (T) -> Unit): CompletableFuture<Void> {
+    return this.thenAccept { result ->
+        dispatcher.runSync { consumer(result) }
+    }
+}
+
+fun CompletableFuture<*>.logOnError(logger: (Throwable) -> Unit): CompletableFuture<*> {
+    return this.exceptionally { throwable ->
+        logger(throwable)
+        null
+    }
+}
