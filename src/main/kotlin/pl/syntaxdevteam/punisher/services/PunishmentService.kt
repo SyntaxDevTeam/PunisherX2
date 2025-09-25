@@ -1,5 +1,7 @@
 package pl.syntaxdevteam.punisher.services
 
+import com.github.benmanes.caffeine.cache.Cache
+import com.github.benmanes.caffeine.cache.Caffeine
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask
 import org.bukkit.scheduler.BukkitTask
 import pl.syntaxdevteam.punisher.PunisherX
@@ -9,15 +11,13 @@ import pl.syntaxdevteam.punisher.databases.DatabaseHandler
 import pl.syntaxdevteam.punisher.databases.PunishmentData
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 class PunishmentService(
     private val plugin: PunisherX,
     private val databaseHandler: DatabaseHandler,
     private val dispatcher: TaskDispatcher
 ) {
-
-    private data class CacheEntry<T>(val value: T, val expiresAt: Long)
 
     private enum class ListingType {
         HISTORY,
@@ -32,15 +32,19 @@ class PunishmentService(
         val offset: Int
     )
 
-    private val activePunishmentsCache = ConcurrentHashMap<UUID, CacheEntry<List<PunishmentData>>>()
-    private val listingCache = ConcurrentHashMap<ListingCacheKey, CacheEntry<List<PunishmentData>>>()
-
     @Volatile
     private var activePunishmentTtl = readCacheTtl()
     @Volatile
     private var listingCacheTtl = readListingCacheTtl()
     @Volatile
     private var cleanupIntervalTicks = readCleanupIntervalTicks()
+
+    @Volatile
+    private var activePunishmentsCache: Cache<UUID, List<PunishmentData>> =
+        createActivePunishmentsCache(activePunishmentTtl)
+    @Volatile
+    private var listingCache: Cache<ListingCacheKey, List<PunishmentData>> =
+        createListingCache(listingCacheTtl)
 
     private var cleanupTask: BukkitTask? = null
     private var foliaCleanupTask: ScheduledTask? = null
@@ -50,16 +54,15 @@ class PunishmentService(
     }
 
     fun getActivePunishments(uuid: UUID, forceRefresh: Boolean = false): CompletableFuture<List<PunishmentData>> {
-        val cached = activePunishmentsCache[uuid]
-        val now = System.currentTimeMillis()
-        if (!forceRefresh && cached != null && cached.expiresAt >= now) {
-            return CompletableFuture.completedFuture(cached.value)
+        val cached = activePunishmentsCache.getIfPresent(uuid)
+        if (!forceRefresh && cached != null) {
+            return CompletableFuture.completedFuture(cached)
         }
 
         return dispatcher.supplyAsync {
             val punishments = databaseHandler.getPunishments(uuid.toString())
                 .filter { plugin.punishmentManager.isPunishmentActive(it) }
-            activePunishmentsCache[uuid] = CacheEntry(punishments, System.currentTimeMillis() + activePunishmentTtl)
+            activePunishmentsCache.put(uuid, punishments)
             punishments
         }
     }
@@ -94,26 +97,23 @@ class PunishmentService(
         }
     }
 
-    fun getCachedActivePunishments(uuid: UUID): List<PunishmentData>? {
-        val now = System.currentTimeMillis()
-        val cached = activePunishmentsCache[uuid] ?: return null
-        return if (cached.expiresAt >= now) cached.value else null
-    }
+    fun getCachedActivePunishments(uuid: UUID): List<PunishmentData>? =
+        activePunishmentsCache.getIfPresent(uuid)
 
     fun invalidate(uuid: UUID) {
-        activePunishmentsCache.remove(uuid)
+        activePunishmentsCache.invalidate(uuid)
     }
 
     fun invalidateAll() {
-        activePunishmentsCache.clear()
-        listingCache.clear()
+        activePunishmentsCache.invalidateAll()
+        listingCache.invalidateAll()
     }
 
     fun removePunishment(identifier: String, type: String, removeAll: Boolean): CompletableFuture<Void> {
         return dispatcher.runAsync {
             databaseHandler.removePunishment(identifier, type, removeAll)
-            runCatching { UUID.fromString(identifier) }.getOrNull()?.let { activePunishmentsCache.remove(it) }
-            listingCache.clear()
+            runCatching { UUID.fromString(identifier) }.getOrNull()?.let { activePunishmentsCache.invalidate(it) }
+            listingCache.invalidateAll()
         }
     }
 
@@ -121,13 +121,13 @@ class PunishmentService(
         val newActiveTtl = readCacheTtl()
         if (newActiveTtl != activePunishmentTtl) {
             activePunishmentTtl = newActiveTtl
-            activePunishmentsCache.clear()
+            activePunishmentsCache = createActivePunishmentsCache(activePunishmentTtl)
         }
 
         val newListingTtl = readListingCacheTtl()
         if (newListingTtl != listingCacheTtl) {
             listingCacheTtl = newListingTtl
-            listingCache.clear()
+            listingCache = createListingCache(listingCacheTtl)
         }
 
         val newCleanupInterval = readCleanupIntervalTicks()
@@ -162,15 +162,14 @@ class PunishmentService(
         forceRefresh: Boolean,
         loader: () -> List<PunishmentData>
     ): CompletableFuture<List<PunishmentData>> {
-        val cached = listingCache[key]
-        val now = System.currentTimeMillis()
-        if (!forceRefresh && cached != null && cached.expiresAt >= now) {
-            return CompletableFuture.completedFuture(cached.value)
+        val cached = listingCache.getIfPresent(key)
+        if (!forceRefresh && cached != null) {
+            return CompletableFuture.completedFuture(cached)
         }
 
         return dispatcher.supplyAsync {
             val snapshot = loader().toList()
-            listingCache[key] = CacheEntry(snapshot, System.currentTimeMillis() + listingCacheTtl)
+            listingCache.put(key, snapshot)
             snapshot
         }
     }
@@ -212,4 +211,14 @@ class PunishmentService(
             plugin.logger.warning("Failed to purge expired punishments: ${throwable.message}")
         }
     }
+
+    private fun createActivePunishmentsCache(ttlMillis: Long): Cache<UUID, List<PunishmentData>> =
+        Caffeine.newBuilder()
+            .expireAfterWrite(ttlMillis, TimeUnit.MILLISECONDS)
+            .build()
+
+    private fun createListingCache(ttlMillis: Long): Cache<ListingCacheKey, List<PunishmentData>> =
+        Caffeine.newBuilder()
+            .expireAfterWrite(ttlMillis, TimeUnit.MILLISECONDS)
+            .build()
 }

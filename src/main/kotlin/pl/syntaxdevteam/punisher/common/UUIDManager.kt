@@ -1,5 +1,7 @@
 package pl.syntaxdevteam.punisher.common
 
+import com.github.benmanes.caffeine.cache.Cache
+import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import java.io.InputStreamReader
@@ -12,21 +14,18 @@ import pl.syntaxdevteam.punisher.PunisherX
 import java.time.Duration
 import java.util.Locale
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 class UUIDManager(private val plugin: PunisherX) {
-    private data class CachedUuid(val value: UUID, val expiresAt: Long) {
-        fun isExpired(now: Long): Boolean = now > expiresAt
-    }
-
     private val cacheTtl = Duration.ofHours(6).toMillis()
-    private val activeUUIDs: MutableMap<String, CachedUuid> = ConcurrentHashMap()
+    private val activeUUIDs: Cache<String, UUID> = Caffeine.newBuilder()
+        .expireAfterWrite(cacheTtl, TimeUnit.MILLISECONDS)
+        .build()
     private val gson = Gson()
 
     fun getUUID(playerName: String): UUID {
-        val now = System.currentTimeMillis()
         val key = playerName.lowercase(Locale.ROOT)
-        activeUUIDs[key]?.takeUnless { it.isExpired(now) }?.let { return it.value }
+        activeUUIDs.getIfPresent(key)?.let { return it }
         val player: Player? = Bukkit.getPlayer(playerName)
         if (player != null) {
             return remember(key, player.uniqueId)
@@ -42,9 +41,8 @@ class UUIDManager(private val plugin: PunisherX) {
     }
 
     fun getCachedUUID(playerName: String): UUID? {
-        val now = System.currentTimeMillis()
         val key = playerName.lowercase(Locale.ROOT)
-        return activeUUIDs[key]?.takeUnless { it.isExpired(now) }?.value
+        return activeUUIDs.getIfPresent(key)
     }
 
     private fun fetchUUIDFromAPI(playerName: String): UUID? {
@@ -129,7 +127,7 @@ class UUIDManager(private val plugin: PunisherX) {
     }
 
     private fun remember(key: String, uuid: UUID): UUID {
-        activeUUIDs[key] = CachedUuid(uuid, System.currentTimeMillis() + cacheTtl)
+        activeUUIDs.put(key, uuid)
         return uuid
     }
 }
