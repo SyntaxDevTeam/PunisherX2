@@ -9,10 +9,10 @@
 - [x] Dla wywołań w pętlach (np. generowanie list) unikać dodatkowych zapytań usuwających wygasłe kary w gorącym path — przenieść czyszczenie do zadania okresowego.
 
 ## Etap 2 – Optymalizacja `PlayerIPManager`
-- [ ] Utrzymywać w pamięci cache rekordów IP (`ConcurrentHashMap`) aktualizowany przy zapisie; synchronizować dostęp przez `TaskDispatcher.runAsync`.
-- [ ] Operacje plikowe/bazodanowe (`readLines`, `appendLine`, `deletePlayerInfo`) wykonywać asynchronicznie i batchowo.
-- [ ] Wyeliminować wielokrotne odszyfrowywanie całego pliku w `searchCache`; przechowywać zdeszyfrowane dane w pamięci, a zmiany zapisywać okresowo.
-- [ ] W miejscach użycia (komendy, GUI) korzystać z pamięci podręcznej zamiast każdorazowego odczytu z dysku/bazy.
+- [x] Utrzymywać w pamięci cache rekordów IP (Caffeine) aktualizowany przy zapisie; synchronizować dostęp przez `TaskDispatcher.runAsync`.
+- [x] Operacje plikowe/bazodanowe (`readLines`, `appendLine`, `deletePlayerInfo`) wykonywać asynchronicznie i batchowo.
+- [x] Wyeliminować wielokrotne odszyfrowywanie całego pliku w `searchCache`; przechowywać zdeszyfrowane dane w pamięci, a zmiany zapisywać okresowo.
+- [x] W miejscach użycia (komendy, GUI) korzystać z pamięci podręcznej zamiast każdorazowego odczytu z dysku/bazy.
 
 ## Etap 3 – GeoIP i sieć poza wątkiem głównym
 - [x] Zastąpić bezpośrednie tworzenie `GeoIPHandler` (które pobiera pliki) zadaniem startowym w `TaskDispatcher.runAsync` z raportowaniem postępu.

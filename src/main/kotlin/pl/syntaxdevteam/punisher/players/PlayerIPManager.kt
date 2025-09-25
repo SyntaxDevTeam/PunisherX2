@@ -13,6 +13,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -42,6 +43,9 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
 
     private val cache: Cache<String, PlayerInfo> = Caffeine.newBuilder().build()
     private val pendingInsertions = ConcurrentLinkedQueue<PlayerInfo>()
+    private val nameIndex: Cache<String, MutableSet<String>> = Caffeine.newBuilder().build()
+    private val uuidIndex: Cache<String, MutableSet<String>> = Caffeine.newBuilder().build()
+    private val ipIndex: Cache<String, MutableSet<String>> = Caffeine.newBuilder().build()
     private val rewriteRequested = AtomicBoolean(false)
     private val flushScheduled = AtomicBoolean(false)
 
@@ -116,6 +120,7 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
         val previous = cache.asMap().putIfAbsent(key, info)
 
         if (previous == null) {
+            indexRecord(key, info)
             pendingInsertions.add(info)
             scheduleFlush()
         }
@@ -236,17 +241,17 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
 
     fun getPlayerIPsByName(playerName: String): List<String> {
         plugin.logger.debug("Fetching all IPs for player: $playerName")
-        return getAllDecryptedRecords()
-            .filter { it.playerName.equals(playerName, ignoreCase = true) }
-            .map { it.playerIP }
+        awaitCacheInitialized()
+        val keys = nameIndex.getIfPresent(playerName.lowercase(Locale.ROOT)) ?: emptySet()
+        return keys.mapNotNull { cache.asMap()[it]?.playerIP }
             .also { plugin.logger.debug("Found IPs for player $playerName: $it") }
     }
 
     fun getPlayerIPsByUUID(playerUUID: String): List<String> {
         plugin.logger.debug("Fetching all IPs for UUID: $playerUUID")
-        return getAllDecryptedRecords()
-            .filter { it.playerUUID.equals(playerUUID, ignoreCase = true) }
-            .map { it.playerIP }
+        awaitCacheInitialized()
+        val keys = uuidIndex.getIfPresent(playerUUID.lowercase(Locale.ROOT)) ?: emptySet()
+        return keys.mapNotNull { cache.asMap()[it]?.playerIP }
             .also { plugin.logger.debug("Found IPs for UUID $playerUUID: $it") }
     }
 
@@ -255,16 +260,19 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
         val targetUuid = playerUUID.toString()
         var removed = false
 
-        val keysToRemove = mutableListOf<String>()
+        val keysToRemove = mutableListOf<Pair<String, PlayerInfo>>()
         cache.asMap().forEach { (key, info) ->
             if (info.playerUUID.equals(targetUuid, ignoreCase = true)) {
                 removed = true
-                keysToRemove += key
+                keysToRemove += key to info
             }
         }
 
         if (keysToRemove.isNotEmpty()) {
-            cache.invalidateAll(keysToRemove)
+            keysToRemove.forEach { (key, info) ->
+                cache.invalidate(key)
+                unregisterIndexes(key, info)
+            }
         }
 
         if (removed) {
@@ -276,11 +284,14 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
     private fun searchCache(playerName: String, playerUUID: String, playerIP: String): PlayerInfo? {
         plugin.logger.debug("Searching cache")
         awaitCacheInitialized()
-        val match = cache.asMap().values.firstOrNull { info ->
-            (playerName.isEmpty() || info.playerName.equals(playerName, ignoreCase = true)) &&
-                (playerUUID.isEmpty() || info.playerUUID.equals(playerUUID, ignoreCase = true)) &&
-                (playerIP.isEmpty() || info.playerIP.equals(playerIP, ignoreCase = true))
-        }
+        val candidateKeys = resolveCandidateKeys(playerName, playerUUID, playerIP)
+        val match = candidateKeys.asSequence()
+            .mapNotNull { cache.asMap()[it] }
+            .firstOrNull { info ->
+                (playerName.isEmpty() || info.playerName.equals(playerName, ignoreCase = true)) &&
+                    (playerUUID.isEmpty() || info.playerUUID.equals(playerUUID, ignoreCase = true)) &&
+                    (playerIP.isEmpty() || info.playerIP.equals(playerIP, ignoreCase = true))
+            }
         return match?.also {
             plugin.logger.debug("Match found: ${serializePlain(it)}")
         } ?: run {
@@ -291,7 +302,9 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
 
 
     fun getPlayersByIP(targetIP: String): List<PlayerInfo> {
-        return getAllDecryptedRecords().filter { it.playerIP.equals(targetIP, ignoreCase = true) }
+        awaitCacheInitialized()
+        val keys = ipIndex.getIfPresent(targetIP.lowercase(Locale.ROOT)) ?: return emptyList()
+        return keys.mapNotNull { cache.asMap()[it]?.copy() }
     }
 
     private fun parsePlayerInfo(decryptedLine: String): PlayerInfo? {
@@ -313,11 +326,14 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
     private fun loadCacheFromStorage() {
         val lines = readLines()
         cache.invalidateAll()
+        clearIndexes()
         lines.forEach { line ->
             val decrypted = decrypt(line)
             val info = parsePlayerInfo(decrypted)
             if (info != null) {
-                cache.put(cacheKey(info.playerUUID, info.playerIP), info)
+                val key = cacheKey(info.playerUUID, info.playerIP)
+                cache.put(key, info)
+                indexRecord(key, info)
             }
         }
         plugin.logger.debug("Loaded ${cache.asMap().size} player cache entries into memory")
@@ -406,5 +422,64 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
         } catch (throwable: Throwable) {
             plugin.logger.err("Player cache initialization failed: ${throwable.message}")
         }
+    }
+
+    private fun resolveCandidateKeys(playerName: String, playerUUID: String, playerIP: String): Collection<String> {
+        val normalizedUuid = playerUUID.takeIf { it.isNotEmpty() }?.lowercase(Locale.ROOT)
+        if (normalizedUuid != null) {
+            uuidIndex.getIfPresent(normalizedUuid)?.let { return it }
+        }
+
+        val normalizedIp = playerIP.takeIf { it.isNotEmpty() }?.lowercase(Locale.ROOT)
+        if (normalizedIp != null) {
+            ipIndex.getIfPresent(normalizedIp)?.let { return it }
+        }
+
+        val normalizedName = playerName.takeIf { it.isNotEmpty() }?.lowercase(Locale.ROOT)
+        if (normalizedName != null) {
+            nameIndex.getIfPresent(normalizedName)?.let { return it }
+        }
+
+        return cache.asMap().keys
+    }
+
+    private fun indexRecord(key: String, info: PlayerInfo) {
+        addIndexEntry(nameIndex, info.playerName, key)
+        addIndexEntry(uuidIndex, info.playerUUID, key)
+        addIndexEntry(ipIndex, info.playerIP, key)
+    }
+
+    private fun unregisterIndexes(key: String, info: PlayerInfo) {
+        removeIndexEntry(nameIndex, info.playerName, key)
+        removeIndexEntry(uuidIndex, info.playerUUID, key)
+        removeIndexEntry(ipIndex, info.playerIP, key)
+    }
+
+    private fun addIndexEntry(
+        index: Cache<String, MutableSet<String>>,
+        attribute: String,
+        key: String
+    ) {
+        val normalized = attribute.lowercase(Locale.ROOT)
+        index.get(normalized) { ConcurrentHashMap.newKeySet() }.add(key)
+    }
+
+    private fun removeIndexEntry(
+        index: Cache<String, MutableSet<String>>,
+        attribute: String,
+        key: String
+    ) {
+        val normalized = attribute.lowercase(Locale.ROOT)
+        val set = index.getIfPresent(normalized) ?: return
+        set.remove(key)
+        if (set.isEmpty()) {
+            index.invalidate(normalized)
+        }
+    }
+
+    private fun clearIndexes() {
+        nameIndex.invalidateAll()
+        uuidIndex.invalidateAll()
+        ipIndex.invalidateAll()
     }
 }
