@@ -21,6 +21,7 @@ import pl.syntaxdevteam.punisher.basic.*
 import pl.syntaxdevteam.punisher.commands.CommandManager
 import pl.syntaxdevteam.punisher.common.CommandLoggerPlugin
 import pl.syntaxdevteam.punisher.common.ConfigHandler
+import pl.syntaxdevteam.punisher.common.TaskDispatcher
 import pl.syntaxdevteam.punisher.databases.*
 import pl.syntaxdevteam.punisher.players.*
 import pl.syntaxdevteam.punisher.hooks.DiscordWebhook
@@ -28,6 +29,7 @@ import pl.syntaxdevteam.punisher.hooks.HookHandler
 import pl.syntaxdevteam.punisher.loader.PluginInitializer
 import pl.syntaxdevteam.punisher.loader.VersionChecker
 import pl.syntaxdevteam.punisher.listeners.PlayerJoinListener
+import pl.syntaxdevteam.punisher.services.PunishmentService
 import java.io.File
 import java.util.*
 
@@ -57,6 +59,11 @@ class PunisherX : JavaPlugin(), Listener {
     lateinit var commandManager: CommandManager
     lateinit var playerIPManager: PlayerIPManager
     lateinit var versionChecker: VersionChecker
+    lateinit var taskDispatcher: TaskDispatcher
+    lateinit var punishmentService: PunishmentService
+
+    @Volatile
+    private var serverNameCache: String? = null
 
 
     /**
@@ -90,6 +97,9 @@ class PunisherX : JavaPlugin(), Listener {
         databaseHandler.closeConnection()
         AsyncChatEvent.getHandlerList().unregister(this as Plugin)
         pluginInitializer.onDisable()
+        if (this::taskDispatcher.isInitialized) {
+            taskDispatcher.close()
+        }
     }
 
     /**
@@ -125,6 +135,10 @@ class PunisherX : JavaPlugin(), Listener {
         configHandler = ConfigHandler(this)
         configHandler.verifyAndUpdateConfig()
 
+        if (!this::taskDispatcher.isInitialized) {
+            taskDispatcher = TaskDispatcher(this)
+        }
+
         databaseHandler = DatabaseHandler(this)
         if (server.name.contains("Folia")) {
             databaseHandler.openConnection()
@@ -137,7 +151,9 @@ class PunisherX : JavaPlugin(), Listener {
         }
 
         server.servicesManager.unregister(punisherXApi)
-        punisherXApi = PunisherXApiImpl(databaseHandler)
+        punishmentService = PunishmentService(this, databaseHandler, taskDispatcher)
+        punishmentService.refreshConfiguration()
+        punisherXApi = PunisherXApiImpl(databaseHandler, taskDispatcher)
         server.servicesManager.register(
             PunisherXApi::class.java,
             punisherXApi,
@@ -154,6 +170,7 @@ class PunisherX : JavaPlugin(), Listener {
         playerJoinListener = PlayerJoinListener(playerIPManager, punishmentChecker)
         server.pluginManager.registerEvents(playerJoinListener, this)
         server.pluginManager.registerEvents(punishmentChecker, this)
+        refreshServerNameAsync()
     }
 
     /**
@@ -162,19 +179,37 @@ class PunisherX : JavaPlugin(), Listener {
      * @return The server name, or "Unknown Server" if not found.
      */
     fun getServerName(): String {
-        val properties = Properties()
-        val file = File("server.properties")
-        if (file.exists()) {
-            properties.load(file.inputStream())
-            val serverName = properties.getProperty("server-name")
-            if (serverName != null) {
-                return serverName
-            } else {
-                logger.debug("Property 'server-name' not found in server.properties file.")
-            }
-        } else {
-            logger.debug("The server.properties file does not exist.")
+        serverNameCache?.let { return it }
+        if (this::taskDispatcher.isInitialized) {
+            refreshServerNameAsync()
         }
         return "Unknown Server"
+    }
+
+    fun refreshServerNameAsync() {
+        if (!this::taskDispatcher.isInitialized) {
+            return
+        }
+        taskDispatcher.runAsync {
+            serverNameCache = loadServerNameFromDisk()
+        }
+    }
+
+    private fun loadServerNameFromDisk(): String {
+        val properties = Properties()
+        val file = File("server.properties")
+        if (!file.exists()) {
+            logger.debug("The server.properties file does not exist.")
+            return "Unknown Server"
+        }
+
+        return runCatching {
+            file.inputStream().use { input ->
+                properties.load(input)
+            }
+            properties.getProperty("server-name") ?: "Unknown Server"
+        }.onFailure {
+            logger.debug("Property 'server-name' could not be read: ${it.message}")
+        }.getOrDefault("Unknown Server")
     }
 }

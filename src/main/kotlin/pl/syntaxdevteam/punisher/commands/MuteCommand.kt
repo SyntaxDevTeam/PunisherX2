@@ -6,6 +6,8 @@ import org.bukkit.Bukkit
 import org.jetbrains.annotations.NotNull
 import pl.syntaxdevteam.punisher.PunisherX
 import pl.syntaxdevteam.punisher.permissions.PermissionChecker
+import pl.syntaxdevteam.punisher.common.thenOnMainThread
+import pl.syntaxdevteam.punisher.common.logOnError
 
 class MuteCommand(private val plugin: PunisherX) : BasicCommand {
 
@@ -30,7 +32,7 @@ class MuteCommand(private val plugin: PunisherX) : BasicCommand {
                             return
                         }
                     }
-                    val uuid = plugin.resolvePlayerUuid(player).toString()
+                    val uuid = plugin.resolvePlayerUuid(player)
 
                     var gtime: String?
                     var reason: String
@@ -46,31 +48,48 @@ class MuteCommand(private val plugin: PunisherX) : BasicCommand {
                     val punishmentType = "MUTE"
                     val start = System.currentTimeMillis()
                     val end: Long? = if (gtime != null) (System.currentTimeMillis() + plugin.timeHandler.parseTime(gtime) * 1000) else null
+                    val formattedTime = plugin.timeHandler.formatTime(gtime)
 
-                    plugin.databaseHandler.addPunishment(player, uuid, reason, stack.sender.name, punishmentType, start, end ?: -1)
-                    plugin.databaseHandler.addPunishmentHistory(player, uuid, reason, stack.sender.name, punishmentType, start, end ?: -1)
+                    plugin.taskDispatcher.supplyAsync {
+                        val persisted = plugin.databaseHandler.addPunishment(player, uuid.toString(), reason, stack.sender.name, punishmentType, start, end ?: -1)
+                        if (persisted) {
+                            plugin.databaseHandler.addPunishmentHistory(player, uuid.toString(), reason, stack.sender.name, punishmentType, start, end ?: -1)
+                        }
+                        persisted
+                    }.thenOnMainThread(plugin.taskDispatcher) { persisted ->
+                        if (!persisted) {
+                            stack.sender.sendMessage(plugin.messageHandler.getMessage("error", "db_error"))
+                            return@thenOnMainThread
+                        }
 
-                    plugin.messageHandler.getSmartMessage(
-                        "mute",
-                        "mute",
-                        mapOf("player" to player, "reason" to reason, "time" to plugin.timeHandler.formatTime(gtime))
-                    ).forEach { stack.sender.sendMessage(it) }
+                        plugin.punishmentService.invalidate(uuid)
+                        plugin.punishmentService.getActivePunishments(uuid, forceRefresh = true)
+                            .logOnError { throwable ->
+                                plugin.logger.warning("Failed to refresh mute cache for $player: ${throwable.message}")
+                            }
 
-                    val muteMessages = plugin.messageHandler.getSmartMessage(
-                        "mute",
-                        "mute_message",
-                        mapOf("reason" to reason, "time" to plugin.timeHandler.formatTime(gtime))
-                    )
-                    targetPlayer?.let { p -> muteMessages.forEach { p.sendMessage(it) } }
+                        plugin.messageHandler.getSmartMessage(
+                            "mute",
+                            "mute",
+                            mapOf("player" to player, "reason" to reason, "time" to formattedTime)
+                        ).forEach { stack.sender.sendMessage(it) }
 
-                    val broadcastMessages = plugin.messageHandler.getSmartMessage(
-                        "mute",
-                        "broadcast",
-                        mapOf("player" to player, "reason" to reason, "time" to plugin.timeHandler.formatTime(gtime))
-                    )
-                    plugin.server.onlinePlayers.forEach { onlinePlayer ->
-                        if (PermissionChecker.hasWithSee(onlinePlayer, PermissionChecker.PermissionKey.SEE_MUTE)) {
-                            broadcastMessages.forEach { onlinePlayer.sendMessage(it) }
+                        val muteMessages = plugin.messageHandler.getSmartMessage(
+                            "mute",
+                            "mute_message",
+                            mapOf("reason" to reason, "time" to formattedTime)
+                        )
+                        targetPlayer?.let { p -> muteMessages.forEach { p.sendMessage(it) } }
+
+                        val broadcastMessages = plugin.messageHandler.getSmartMessage(
+                            "mute",
+                            "broadcast",
+                            mapOf("player" to player, "reason" to reason, "time" to formattedTime)
+                        )
+                        plugin.server.onlinePlayers.forEach { onlinePlayer ->
+                            if (PermissionChecker.hasWithSee(onlinePlayer, PermissionChecker.PermissionKey.SEE_MUTE)) {
+                                broadcastMessages.forEach { onlinePlayer.sendMessage(it) }
+                            }
                         }
                     }
                 }

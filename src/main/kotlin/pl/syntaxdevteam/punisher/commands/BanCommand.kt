@@ -10,6 +10,8 @@ import org.bukkit.ban.ProfileBanList
 import org.jetbrains.annotations.NotNull
 import pl.syntaxdevteam.punisher.PunisherX
 import pl.syntaxdevteam.punisher.permissions.PermissionChecker
+import pl.syntaxdevteam.punisher.common.thenOnMainThread
+import pl.syntaxdevteam.punisher.common.logOnError
 import java.util.*
 
 class BanCommand(private var plugin: PunisherX) : BasicCommand {
@@ -50,52 +52,66 @@ class BanCommand(private var plugin: PunisherX) : BasicCommand {
                     val punishmentType = "BAN"
                     val start = System.currentTimeMillis()
                     val end: Long? = if (gtime != null) (System.currentTimeMillis() + plugin.timeHandler.parseTime(gtime) * 1000) else null
+                    val formattedTime = plugin.timeHandler.formatTime(gtime)
 
-                    val success = plugin.databaseHandler.addPunishment(player, uuid.toString(), reason, stack.sender.name, punishmentType, start, end ?: -1)
-                    if (!success) {
-                        plugin.logger.err("Failed to add ban to database for player $player. Using fallback method.")
-                        stack.sender.sendMessage(plugin.messageHandler.getMessage("error", "db_error"))
-                        val playerProfile = Bukkit.createProfile(uuid, player)
-                        val banList: ProfileBanList = Bukkit.getBanList(BanListType.PROFILE)
-                        val banEndDate = if (gtime != null) Date(System.currentTimeMillis() + plugin.timeHandler.parseTime(gtime) * 1000) else null
-                        banList.addBan(playerProfile, reason, banEndDate, stack.sender.name)
-                    }
-                    clp.logCommand(stack.sender.name, punishmentType, player, reason)
-                    plugin.databaseHandler.addPunishmentHistory(player, uuid.toString(), reason, stack.sender.name, punishmentType, start, end ?: -1)
+                    plugin.taskDispatcher.supplyAsync {
+                        val persisted = plugin.databaseHandler.addPunishment(player, uuid.toString(), reason, stack.sender.name, punishmentType, start, end ?: -1)
+                        if (persisted) {
+                            plugin.databaseHandler.addPunishmentHistory(player, uuid.toString(), reason, stack.sender.name, punishmentType, start, end ?: -1)
+                        }
+                        persisted
+                    }.thenOnMainThread(plugin.taskDispatcher) { persisted ->
+                        if (!persisted) {
+                            plugin.logger.err("Failed to add ban to database for player $player. Using fallback method.")
+                            stack.sender.sendMessage(plugin.messageHandler.getMessage("error", "db_error"))
+                            val playerProfile = Bukkit.createProfile(uuid, player)
+                            val banList: ProfileBanList = Bukkit.getBanList(BanListType.PROFILE)
+                            val banEndDate = if (gtime != null) Date(System.currentTimeMillis() + plugin.timeHandler.parseTime(gtime) * 1000) else null
+                            banList.addBan(playerProfile, reason, banEndDate, stack.sender.name)
+                        } else {
+                            plugin.punishmentService.invalidate(uuid)
+                            plugin.punishmentService.getActivePunishments(uuid, forceRefresh = true)
+                                .logOnError { throwable ->
+                                    plugin.logger.warning("Failed to refresh ban cache for $player: ${throwable.message}")
+                                }
+                        }
 
-                    if (targetPlayer != null) {
-                        val kickMessages = plugin.messageHandler.getSmartMessage(
+                        clp.logCommand(stack.sender.name, punishmentType, player, reason)
+
+                        if (targetPlayer != null) {
+                            val kickMessages = plugin.messageHandler.getSmartMessage(
+                                "ban",
+                                "kick_message",
+                                mapOf("reason" to reason, "time" to formattedTime)
+                            )
+                            val kickMessage = Component.text()
+                            kickMessages.forEach { line ->
+                                kickMessage.append(line)
+                                kickMessage.append(Component.newline())
+                            }
+                            targetPlayer.kick(kickMessage.build())
+                        }
+
+                        plugin.messageHandler.getSmartMessage(
                             "ban",
-                            "kick_message",
-                            mapOf("reason" to reason, "time" to plugin.timeHandler.formatTime(gtime))
+                            "ban",
+                            mapOf("player" to player, "reason" to reason, "time" to formattedTime)
+                        ).forEach { stack.sender.sendMessage(it) }
+
+                        val broadcastMessages = plugin.messageHandler.getSmartMessage(
+                            "ban",
+                            "broadcast",
+                            mapOf("player" to player, "reason" to reason, "time" to formattedTime)
                         )
-                        val kickMessage = Component.text()
-                        kickMessages.forEach { line ->
-                            kickMessage.append(line)
-                            kickMessage.append(Component.newline())
+
+                        plugin.server.onlinePlayers.forEach { onlinePlayer ->
+                            if(PermissionChecker.hasWithSee(onlinePlayer, PermissionChecker.PermissionKey.SEE_BAN)) {
+                                broadcastMessages.forEach { onlinePlayer.sendMessage(it) }
+                            }
                         }
-                        targetPlayer.kick(kickMessage.build())
-                    }
-
-                    plugin.messageHandler.getSmartMessage(
-                        "ban",
-                        "ban",
-                        mapOf("player" to player, "reason" to reason, "time" to plugin.timeHandler.formatTime(gtime))
-                    ).forEach { stack.sender.sendMessage(it) }
-
-                    val broadcastMessages = plugin.messageHandler.getSmartMessage(
-                        "ban",
-                        "broadcast",
-                        mapOf("player" to player, "reason" to reason, "time" to plugin.timeHandler.formatTime(gtime))
-                    )
-
-                    plugin.server.onlinePlayers.forEach { onlinePlayer ->
-                        if(PermissionChecker.hasWithSee(onlinePlayer, PermissionChecker.PermissionKey.SEE_BAN)) {
-                            broadcastMessages.forEach { onlinePlayer.sendMessage(it) }
+                        if (isForce) {
+                            plugin.logger.warning("Force-banned by ${stack.sender.name} on $player")
                         }
-                    }
-                    if (isForce) {
-                        plugin.logger.warning("Force-banned by ${stack.sender.name} on $player")
                     }
 
                 }
