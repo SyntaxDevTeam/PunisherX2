@@ -21,23 +21,31 @@ class ChangeReasonCommand(private val plugin: PunisherX) : BasicCommand {
                     stack.sender.sendMessage(plugin.messageHandler.getMessage("change-reason", "invalid_id"))
                     return
                 }
-                val success = plugin.databaseHandler.updatePunishmentReason(id, newReason)
-                if (success) {
-                    stack.sender.sendMessage(
-                        plugin.messageHandler.getMessage(
-                            "change-reason",
-                            "success",
-                            mapOf("id" to id.toString(), "reason" to newReason)
+                plugin.executeDatabaseAsync(
+                    stack,
+                    "update punishment reason $id",
+                    {
+                        val success = plugin.databaseHandler.updatePunishmentReason(id, newReason)
+                        ChangeReasonResult(id, newReason, success)
+                    }
+                ) { result ->
+                    if (result.success) {
+                        stack.sender.sendMessage(
+                            plugin.messageHandler.getMessage(
+                                "change-reason",
+                                "success",
+                                mapOf("id" to result.id.toString(), "reason" to result.reason)
+                            )
                         )
-                    )
-                } else {
-                    stack.sender.sendMessage(
-                        plugin.messageHandler.getMessage(
-                            "change-reason",
-                            "failure",
-                            mapOf("id" to id.toString())
+                    } else {
+                        stack.sender.sendMessage(
+                            plugin.messageHandler.getMessage(
+                                "change-reason",
+                                "failure",
+                                mapOf("id" to result.id.toString())
+                            )
                         )
-                    )
+                    }
                 }
             } else {
                 stack.sender.sendMessage(plugin.messageHandler.getMessage("ban", "usage"))
@@ -47,6 +55,8 @@ class ChangeReasonCommand(private val plugin: PunisherX) : BasicCommand {
         }
 
     }
+
+    private data class ChangeReasonResult(val id: Int, val reason: String, val success: Boolean)
 
     override fun suggest(@NotNull stack: CommandSourceStack, @NotNull args: Array<String>): List<String> {
         if (!PermissionChecker.hasWithLegacy(stack.sender, PermissionChecker.PermissionKey.CHANGE_REASON)) {

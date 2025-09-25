@@ -22,3 +22,28 @@ fun <T> CompletableFuture<T>.deliverToCommand(
         onSuccess(result)
     }
 }
+
+fun <T> PunisherX.executeDatabaseAsync(
+    stack: CommandSourceStack,
+    actionDescription: String,
+    task: () -> T,
+    onSuccess: (T) -> Unit
+) {
+    taskDispatcher
+        .supplyAsync(task)
+        .deliverToCommand(this, stack, actionDescription, onSuccess)
+}
+
+fun PunisherX.executeDatabaseAsync(
+    stack: CommandSourceStack,
+    actionDescription: String,
+    task: () -> Unit,
+    onSuccess: () -> Unit = {}
+) {
+    executeDatabaseAsync(stack, actionDescription, {
+        task()
+        Unit
+    }) {
+        onSuccess()
+    }
+}

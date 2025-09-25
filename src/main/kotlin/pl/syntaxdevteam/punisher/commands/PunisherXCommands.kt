@@ -57,11 +57,27 @@ class PunishesXCommands(private val plugin: PunisherX) : BasicCommand {
             }
 
             args[0].equals("export", ignoreCase = true) -> {
-                plugin.databaseHandler.exportDatabase()
+                plugin.executeDatabaseAsync(
+                    stack,
+                    "export database",
+                    { plugin.databaseHandler.exportDatabase() }
+                ) {
+                    stack.sender.sendMessage(
+                        mH.miniMessageFormat("$prefix <green>Database export finished. Check logs for details.</green>")
+                    )
+                }
             }
 
             args[0].equals("import", ignoreCase = true) -> {
-                plugin.databaseHandler.importDatabase()
+                plugin.executeDatabaseAsync(
+                    stack,
+                    "import database",
+                    { plugin.databaseHandler.importDatabase() }
+                ) {
+                    stack.sender.sendMessage(
+                        mH.miniMessageFormat("$prefix <green>Database import finished. Check logs for details.</green>")
+                    )
+                }
             }
 
             args[0].equals("migrate", ignoreCase = true) -> {
@@ -77,7 +93,15 @@ class PunishesXCommands(private val plugin: PunisherX) : BasicCommand {
                     stack.sender.sendMessage(mH.miniMessageFormat("$prefix <red>Unknown database type.</red>"))
                     return
                 }
-                plugin.databaseHandler.migrateDatabase(fromType, toType)
+                plugin.executeDatabaseAsync(
+                    stack,
+                    "migrate database from $fromType to $toType",
+                    { plugin.databaseHandler.migrateDatabase(fromType, toType) }
+                ) {
+                    stack.sender.sendMessage(
+                        mH.miniMessageFormat("$prefix <green>Migration task finished. Check logs for detailed status.</green>")
+                    )
+                }
             }
             /*
             args[0].equals("panel", ignoreCase = true) -> {

@@ -14,20 +14,42 @@ class UnMuteCommand(private val plugin: PunisherX) : BasicCommand {
             if (args.isNotEmpty()) {
                 val player = args[0]
                 val uuid = plugin.resolvePlayerUuid(player).toString()
-                val punishments = plugin.databaseHandler.getPunishments(uuid)
-                if (punishments.isNotEmpty()) {
-                    punishments.forEach { punishment ->
-                        if (punishment.type == "MUTE") {
-                            plugin.databaseHandler.removePunishment(uuid, punishment.type)
+                plugin.executeDatabaseAsync(
+                    stack,
+                    "unmute $player",
+                    {
+                        val punishments = plugin.databaseHandler.getPunishments(uuid)
+                        val mutePunishments = punishments.filter { it.type == "MUTE" }
+                        if (mutePunishments.isNotEmpty()) {
+                            mutePunishments.forEach { punishment ->
+                                plugin.databaseHandler.removePunishment(uuid, punishment.type)
+                            }
+                            plugin.punishmentService.invalidate(java.util.UUID.fromString(uuid))
                         }
+                        UnmuteResult(player, uuid, mutePunishments.isNotEmpty())
                     }
-                    stack.sender.sendMessage(plugin.messageHandler.getMessage("unmute", "unmute", mapOf("player" to player)))
-                    val targetPlayer = Bukkit.getPlayer(player)
-                    val muteMessage = plugin.messageHandler.getMessage("unmute", "unmute_message")
-                    targetPlayer?.sendMessage(muteMessage)
-                    plugin.logger.info("Player $player ($uuid) has been unmuted")
-                } else {
-                    stack.sender.sendMessage(plugin.messageHandler.getMessage("error", "player_not_found", mapOf("player" to player)))
+                ) { result ->
+                    if (result.removed) {
+                        stack.sender.sendMessage(
+                            plugin.messageHandler.getMessage(
+                                "unmute",
+                                "unmute",
+                                mapOf("player" to result.player)
+                            )
+                        )
+                        Bukkit.getPlayer(result.player)?.sendMessage(
+                            plugin.messageHandler.getMessage("unmute", "unmute_message")
+                        )
+                        plugin.logger.info("Player ${result.player} (${result.uuid}) has been unmuted")
+                    } else {
+                        stack.sender.sendMessage(
+                            plugin.messageHandler.getMessage(
+                                "error",
+                                "player_not_found",
+                                mapOf("player" to result.player)
+                            )
+                        )
+                    }
                 }
             } else {
                 stack.sender.sendMessage(plugin.messageHandler.getMessage("unmute", "usage"))
@@ -36,6 +58,8 @@ class UnMuteCommand(private val plugin: PunisherX) : BasicCommand {
             stack.sender.sendMessage(plugin.messageHandler.getMessage("error", "no_permission"))
         }
     }
+
+    private data class UnmuteResult(val player: String, val uuid: String, val removed: Boolean)
 
     override fun suggest(@NotNull stack: CommandSourceStack, @NotNull args: Array<String>): List<String> {
         if (!PermissionChecker.hasWithLegacy(stack.sender, PermissionChecker.PermissionKey.UNMUTE)) {

@@ -1,12 +1,12 @@
 # Plan naprawczy wydajności PunisherX
 
 ## Etap 1 – Przeniesienie zapytań bazodanowych z głównego wątku
-- [ ] Zaimplementować w `CommandManager`/poszczególnych komendach wspólny helper, który odpala logikę pobierania danych (`PunishmentService`, `DatabaseHandler`) przez `TaskDispatcher.supplyAsync`.
-- [ ] Przerobić `HistoryCommand`, `CheckCommand`, `BanListCommand` (i inne korzystające z `databaseHandler.get*`) tak, aby:
+- [x] Zaimplementować w `CommandManager`/poszczególnych komendach wspólny helper, który odpala logikę pobierania danych (`PunishmentService`, `DatabaseHandler`) przez `TaskDispatcher.supplyAsync`.
+- [x] Przerobić `HistoryCommand`, `CheckCommand`, `BanListCommand` (i inne korzystające z `databaseHandler.get*`) tak, aby:
   - pobieranie/filtracja danych działały w wątku roboczym,
   - aktualizacja GUI/wiadomości wracała na wątek główny (`thenOnMainThread`).
-- [ ] Dodać krótkotrwałe cache wyników listowań (np. `PunishmentService#getPunishmentHistory` z TTL), żeby ograniczyć liczbę zapytań w krótkim czasie.
-- [ ] Dla wywołań w pętlach (np. generowanie list) unikać dodatkowych zapytań usuwających wygasłe kary w gorącym path — przenieść czyszczenie do zadania okresowego.
+- [x] Dodać krótkotrwałe cache wyników listowań (np. `PunishmentService#getPunishmentHistory` z TTL), żeby ograniczyć liczbę zapytań w krótkim czasie.
+- [x] Dla wywołań w pętlach (np. generowanie list) unikać dodatkowych zapytań usuwających wygasłe kary w gorącym path — przenieść czyszczenie do zadania okresowego.
 
 ## Etap 2 – Optymalizacja `PlayerIPManager`
 - [ ] Utrzymywać w pamięci cache rekordów IP (`ConcurrentHashMap`) aktualizowany przy zapisie; synchronizować dostęp przez `TaskDispatcher.runAsync`.
