@@ -94,6 +94,9 @@ class PunisherX : JavaPlugin(), Listener {
      * Closes the database connection and unregisters events.
      */
     override fun onDisable() {
+        if (this::punishmentService.isInitialized) {
+            punishmentService.shutdown()
+        }
         databaseHandler.closeConnection()
         AsyncChatEvent.getHandlerList().unregister(this as Plugin)
         pluginInitializer.onDisable()
@@ -123,6 +126,9 @@ class PunisherX : JavaPlugin(), Listener {
      * Reloads the plugin configuration and reinitializes the database connection.
      */
     private fun reloadMyConfig() {
+        if (this::punishmentService.isInitialized) {
+            punishmentService.shutdown()
+        }
         databaseHandler.closeConnection()
         try {
             messageHandler.reloadMessages()
