@@ -1,5 +1,7 @@
 package pl.syntaxdevteam.punisher.players
 
+import com.github.benmanes.caffeine.cache.Cache
+import com.github.benmanes.caffeine.cache.Caffeine
 import org.bukkit.event.player.PlayerJoinEvent
 import pl.syntaxdevteam.punisher.PunisherX
 import java.io.File
@@ -9,7 +11,6 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.Cipher
@@ -36,7 +37,7 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
 
     private val separator = "|"
 
-    private val cache = ConcurrentHashMap<String, PlayerInfo>()
+    private val cache: Cache<String, PlayerInfo> = Caffeine.newBuilder().build()
     private val pendingInsertions = ConcurrentLinkedQueue<PlayerInfo>()
     private val rewriteRequested = AtomicBoolean(false)
     private val flushScheduled = AtomicBoolean(false)
@@ -95,7 +96,7 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
         )
 
         val key = cacheKey(playerUUID, playerIP)
-        val previous = cache.putIfAbsent(key, info)
+        val previous = cache.asMap().putIfAbsent(key, info)
 
         if (previous == null) {
             pendingInsertions.add(info)
@@ -197,7 +198,7 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
 
     fun getAllDecryptedRecords(): List<PlayerInfo> {
         awaitCacheInitialized()
-        return cache.values.map { it.copy() }
+        return cache.asMap().values.map { it.copy() }
     }
 
     fun getPlayerIPByName(playerName: String): String? {
@@ -237,12 +238,16 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
         val targetUuid = playerUUID.toString()
         var removed = false
 
-        cache.entries.removeIf { entry ->
-            val matches = entry.value.playerUUID.equals(targetUuid, ignoreCase = true)
-            if (matches) {
+        val keysToRemove = mutableListOf<String>()
+        cache.asMap().forEach { (key, info) ->
+            if (info.playerUUID.equals(targetUuid, ignoreCase = true)) {
                 removed = true
+                keysToRemove += key
             }
-            matches
+        }
+
+        if (keysToRemove.isNotEmpty()) {
+            cache.invalidateAll(keysToRemove)
         }
 
         if (removed) {
@@ -254,7 +259,7 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
     private fun searchCache(playerName: String, playerUUID: String, playerIP: String): PlayerInfo? {
         plugin.logger.debug("Searching cache")
         awaitCacheInitialized()
-        val match = cache.values.firstOrNull { info ->
+        val match = cache.asMap().values.firstOrNull { info ->
             (playerName.isEmpty() || info.playerName.equals(playerName, ignoreCase = true)) &&
                 (playerUUID.isEmpty() || info.playerUUID.equals(playerUUID, ignoreCase = true)) &&
                 (playerIP.isEmpty() || info.playerIP.equals(playerIP, ignoreCase = true))
@@ -290,15 +295,15 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
 
     private fun loadCacheFromStorage() {
         val lines = readLines()
-        cache.clear()
+        cache.invalidateAll()
         lines.forEach { line ->
             val decrypted = decrypt(line)
             val info = parsePlayerInfo(decrypted)
             if (info != null) {
-                cache[cacheKey(info.playerUUID, info.playerIP)] = info
+                cache.put(cacheKey(info.playerUUID, info.playerIP), info)
             }
         }
-        plugin.logger.debug("Loaded ${cache.size} player cache entries into memory")
+        plugin.logger.debug("Loaded ${cache.asMap().size} player cache entries into memory")
     }
 
     private fun scheduleFlush(forceRewrite: Boolean = false) {
@@ -322,7 +327,7 @@ class PlayerIPManager(private val plugin: PunisherX, val geoIPHandler: GeoIPHand
 
     private fun flushPendingWrites() {
         if (rewriteRequested.getAndSet(false)) {
-            val snapshot = cache.values.map { encrypt(serializePlain(it)) }
+            val snapshot = cache.asMap().values.map { encrypt(serializePlain(it)) }
             pendingInsertions.clear()
             overwriteLines(snapshot)
             return
