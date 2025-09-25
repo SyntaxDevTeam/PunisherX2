@@ -17,6 +17,16 @@ playerCache:
   # Choose where player IP information is stored: "file" or "database"
   storage: "file"
 
+performance:
+  cache:
+    # TTL for active punishment cache in milliseconds. Minimum 1 second.
+    active-punishments-ms: 5000
+    # TTL for command listing caches (history, banlist) in milliseconds.
+    listings-ms: 2000
+  cleanup:
+    # How often expired punishments are purged from the database (in ticks). 1200 ticks = 60 seconds.
+    expired-punishments-interval-ticks: 1200
+
 
 # /********************************************/
 #    Settings for main commands

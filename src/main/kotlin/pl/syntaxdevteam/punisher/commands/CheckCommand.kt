@@ -5,8 +5,10 @@ import io.papermc.paper.command.brigadier.CommandSourceStack
 import org.bukkit.Bukkit
 import org.jetbrains.annotations.NotNull
 import pl.syntaxdevteam.punisher.PunisherX
+import pl.syntaxdevteam.punisher.databases.PunishmentData
 import pl.syntaxdevteam.punisher.permissions.PermissionChecker
 import pl.syntaxdevteam.punisher.players.PlayerIPManager
+import java.util.UUID
 
 class CheckCommand(private val plugin: PunisherX, private val playerIPManager: PlayerIPManager) : BasicCommand {
 
@@ -21,79 +23,39 @@ class CheckCommand(private val plugin: PunisherX, private val playerIPManager: P
         if (player.equals(stack.sender.name, ignoreCase = true) || PermissionChecker.hasWithLegacy(stack.sender, PermissionChecker.PermissionKey.CHECK)) {
             if (args.size < 2) {
                 stack.sender.sendMessage(plugin.messageHandler.getMessage("check", "usage"))
-            } else {
-                val type = args[1]
-                val uuid = plugin.resolvePlayerUuid(player)
-                val targetPlayer = when (Bukkit.getPlayer(player)?.name) {
-                    null -> Bukkit.getOfflinePlayer(uuid).name
-                    else -> Bukkit.getPlayer(player)?.name
-                }
-                val punishments = plugin.databaseHandler.getPunishments(uuid.toString())
-                val filteredPunishments = when (type.lowercase()) {
-                    "all" -> punishments
-                    "ban" -> punishments.filter { it.type == "BAN" || it.type == "BANIP" }
-                    "jail" -> punishments.filter { it.type == "JAIL" }
-                    "mute" -> punishments.filter { it.type == "MUTE" }
-                    "warn" -> punishments.filter { it.type == "WARN" }
-                    else -> {
-                        stack.sender.sendMessage(plugin.messageHandler.getMessage("check", "invalid_type"))
-                        return
-                    }
-                }
+                return
+            }
 
-                if (filteredPunishments.isEmpty()) {
-                    stack.sender.sendMessage(
-                        plugin.messageHandler.getMessage("check", "no_punishments", mapOf("player" to player))
-                    )
-                } else {
-                    val id = plugin.messageHandler.getCleanMessage("check", "id")
-                    val types = plugin.messageHandler.getCleanMessage("check", "type")
-                    val reasons = plugin.messageHandler.getCleanMessage("check", "reason")
-                    val times = plugin.messageHandler.getCleanMessage("check", "time")
-                    val title = plugin.messageHandler.getCleanMessage("check", "title")
+            val type = args[1].lowercase()
+            val uuid = plugin.resolvePlayerUuid(player)
+            val targetPlayer = when (Bukkit.getPlayer(player)?.name) {
+                null -> Bukkit.getOfflinePlayer(uuid).name
+                else -> Bukkit.getPlayer(player)?.name
+            }
+
+            val filter = createFilter(type) ?: run {
+                stack.sender.sendMessage(plugin.messageHandler.getMessage("check", "invalid_type"))
+                return
+            }
+
+            plugin.punishmentService.getActivePunishments(uuid)
+                .thenApply { punishments ->
+                    val filtered = punishments.filter(filter)
                     val playerIP = playerIPManager.getPlayerIPByName(player)
                     plugin.logger.debug("Player IP: $playerIP")
-                    val geoLocation = playerIP?.let { ip ->
-                        val country = playerIPManager.geoIPHandler.getCountry(ip)
-                        val city = playerIPManager.geoIPHandler.getCity(ip)
-                        plugin.logger.debug("Country: $country, City: $city")
-                        "$city, $country"
-                    } ?: "Unknown location"
+                    val geoLocation = playerIP?.let { resolveGeoLocation(it) } ?: UNKNOWN_LOCATION
                     plugin.logger.debug("GeoLocation: $geoLocation")
-                    val fullGeoLocation = when (PermissionChecker.hasWithLegacy(stack.sender, PermissionChecker.PermissionKey.VIEW_IP)) {
-                        true -> "$playerIP ($geoLocation)"
-                        else -> geoLocation
-                    }
-                    val gamer = if (stack.sender.name == "CONSOLE") {
-                        "<gold>$targetPlayer <gray>[$uuid, $fullGeoLocation]</gray>:</gold>"
-                    } else {
-                        "<gold><hover:show_text:'[<white>$uuid, $fullGeoLocation</white>]'>$targetPlayer:</gold>"
-                    }
-                    val mh = plugin.messageHandler
-                    val topHeader = mh.miniMessageFormat("<blue>--------------------------------------------------</blue>")
-                    val header = mh.miniMessageFormat("<blue>|    $title $gamer</blue>")
-                    val tableHeader = mh.miniMessageFormat("<blue>|   $id  |  $types  |  $reasons  |  $times</blue>")
-                    val br = mh.miniMessageFormat("<blue> </blue>")
-                    val hr = mh.miniMessageFormat("<blue>|</blue>")
-                    stack.sender.sendMessage(br)
-                    stack.sender.sendMessage(header)
-                    stack.sender.sendMessage(topHeader)
-                    stack.sender.sendMessage(tableHeader)
-                    stack.sender.sendMessage(hr)
-
-                    filteredPunishments.forEach { punishment ->
-                        val endTime = punishment.end
-                        val remainingTime = (endTime - System.currentTimeMillis()) / 1000
-                        val duration = if (endTime == -1L) "permanent" else plugin.timeHandler.formatTime(remainingTime.toString())
-                        val reason = punishment.reason
-                        val row = mh.miniMessageFormat(
-                            "<blue>|   <white>#${punishment.id}</white> <blue>|</blue> <white>${punishment.type}</white> " +
-                                    "<blue>|</blue> <white>$reason</white> <blue>|</blue> <white>$duration</white>"
+                    CheckResult(uuid, targetPlayer, filtered, playerIP, geoLocation)
+                }
+                .deliverToCommand(plugin, stack, "fetch punishments for $player") { result ->
+                    if (result.filteredPunishments.isEmpty()) {
+                        stack.sender.sendMessage(
+                            plugin.messageHandler.getMessage("check", "no_punishments", mapOf("player" to player))
                         )
-                        stack.sender.sendMessage(row)
+                    } else {
+                        renderPunishments(stack, player, result)
                     }
                 }
-            }
         } else {
             stack.sender.sendMessage(plugin.messageHandler.getMessage("error", "no_permission"))
         }
@@ -105,5 +67,81 @@ class CheckCommand(private val plugin: PunisherX, private val playerIPManager: P
             2 -> listOf("all", "warn", "mute", "jail", "ban")
             else -> emptyList()
         }
+    }
+
+    private fun resolveGeoLocation(ip: String): String {
+        val country = playerIPManager.geoIPHandler.getCountry(ip)
+        val city = playerIPManager.geoIPHandler.getCity(ip)
+        plugin.logger.debug("Country: $country, City: $city")
+        return "$city, $country"
+    }
+
+    private fun createFilter(type: String): ((PunishmentData) -> Boolean)? {
+        return when (type) {
+            "all" -> { _ -> true }
+            "ban" -> { punishment -> punishment.type == "BAN" || punishment.type == "BANIP" }
+            "jail" -> { punishment -> punishment.type == "JAIL" }
+            "mute" -> { punishment -> punishment.type == "MUTE" }
+            "warn" -> { punishment -> punishment.type == "WARN" }
+            else -> null
+        }
+    }
+
+    private fun renderPunishments(stack: CommandSourceStack, player: String, result: CheckResult) {
+        val uuid = result.uuid
+        val filteredPunishments = result.filteredPunishments
+        val mh = plugin.messageHandler
+        val id = mh.getCleanMessage("check", "id")
+        val types = mh.getCleanMessage("check", "type")
+        val reasons = mh.getCleanMessage("check", "reason")
+        val times = mh.getCleanMessage("check", "time")
+        val title = mh.getCleanMessage("check", "title")
+        val geoLocation = result.geoLocation
+        val fullGeoLocation = if (PermissionChecker.hasWithLegacy(stack.sender, PermissionChecker.PermissionKey.VIEW_IP)) {
+            "${result.playerIP ?: UNKNOWN_LOCATION} ($geoLocation)"
+        } else {
+            geoLocation
+        }
+        val gamer = if (stack.sender.name == "CONSOLE") {
+            "<gold>${result.targetPlayer ?: player} <gray>[$uuid, $fullGeoLocation]</gray>:</gold>"
+        } else {
+            "<gold><hover:show_text:'[<white>$uuid, $fullGeoLocation</white>]'>${result.targetPlayer ?: player}:</gold>"
+        }
+        val topHeader = mh.miniMessageFormat("<blue>--------------------------------------------------</blue>")
+        val header = mh.miniMessageFormat("<blue>|    $title $gamer</blue>")
+        val tableHeader = mh.miniMessageFormat("<blue>|   $id  |  $types  |  $reasons  |  $times</blue>")
+        val br = mh.miniMessageFormat("<blue> </blue>")
+        val hr = mh.miniMessageFormat("<blue>|</blue>")
+        stack.sender.sendMessage(br)
+        stack.sender.sendMessage(header)
+        stack.sender.sendMessage(topHeader)
+        stack.sender.sendMessage(tableHeader)
+        stack.sender.sendMessage(hr)
+
+        filteredPunishments.forEach { punishment ->
+            val duration = if (punishment.end == -1L) {
+                "permanent"
+            } else {
+                val remainingTime = (punishment.end - System.currentTimeMillis()) / 1000
+                plugin.timeHandler.formatTime(remainingTime.toString())
+            }
+            val row = mh.miniMessageFormat(
+                "<blue>|   <white>#${punishment.id}</white> <blue>|</blue> <white>${punishment.type}</white> " +
+                        "<blue>|</blue> <white>${punishment.reason}</white> <blue>|</blue> <white>$duration</white>"
+            )
+            stack.sender.sendMessage(row)
+        }
+    }
+
+    private data class CheckResult(
+        val uuid: UUID,
+        val targetPlayer: String?,
+        val filteredPunishments: List<PunishmentData>,
+        val playerIP: String?,
+        val geoLocation: String
+    )
+
+    companion object {
+        private const val UNKNOWN_LOCATION = "Unknown location"
     }
 }
