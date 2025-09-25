@@ -1,5 +1,7 @@
 package pl.syntaxdevteam.punisher.gui.stats
 
+import com.github.benmanes.caffeine.cache.Cache
+import com.github.benmanes.caffeine.cache.Caffeine
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import java.io.File
@@ -21,7 +23,7 @@ import org.bukkit.Location
  */
 object PlayerStatsService {
     private val gson = Gson()
-    private val cache = mutableMapOf<UUID, Cached>()
+    private val cache: Cache<UUID, Cached> = Caffeine.newBuilder().build()
 
     private data class Cached(
         val json: JsonObject,
@@ -33,11 +35,11 @@ object PlayerStatsService {
         if (!f.exists()) return null
 
         val lm = f.lastModified()
-        val cached = cache[uuid]
+        val cached = cache.getIfPresent(uuid)
         if (cached != null && cached.lastModified == lm) return cached.json
 
         val json = gson.fromJson(f.readText(), JsonObject::class.java)
-        cache[uuid] = Cached(json, lm)
+        cache.put(uuid, Cached(json, lm))
         return json
     }
 
