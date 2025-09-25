@@ -15,10 +15,10 @@
 - [ ] W miejscach użycia (komendy, GUI) korzystać z pamięci podręcznej zamiast każdorazowego odczytu z dysku/bazy.
 
 ## Etap 3 – GeoIP i sieć poza wątkiem głównym
-- [ ] Zastąpić bezpośrednie tworzenie `GeoIPHandler` (które pobiera pliki) zadaniem startowym w `TaskDispatcher.runAsync` z raportowaniem postępu.
-- [ ] Utrzymywać pojedynczą instancję `DatabaseReader` współdzieloną między wywołaniami (lazy init + recykling), zamiast tworzyć nową przy każdym `getCountry`/`getCity`.
-- [ ] Obsługę błędów (brak licencji/brak pliku) zamieniać na flagę wyłączającą funkcje GeoIP, aby nie próbować pobierać danych w kółko.
-- [ ] Wywołania GeoIP w zdarzeniach (`PlayerJoinEvent`) wykonywać asynchronicznie z timeoutem, a wynik dostarczać na główny wątek dopiero przy zapisie.
+- [x] Zastąpić bezpośrednie tworzenie `GeoIPHandler` (które pobiera pliki) zadaniem startowym w `TaskDispatcher.runAsync` z raportowaniem postępu.
+- [x] Utrzymywać pojedynczą instancję `DatabaseReader` współdzieloną między wywołaniami (lazy init + recykling), zamiast tworzyć nową przy każdym `getCountry`/`getCity`.
+- [x] Obsługę błędów (brak licencji/brak pliku) zamieniać na flagę wyłączającą funkcje GeoIP, aby nie próbować pobierać danych w kółko.
+- [x] Wywołania GeoIP w zdarzeniach (`PlayerJoinEvent`) wykonywać asynchronicznie z timeoutem, a wynik dostarczać na główny wątek dopiero przy zapisie.
 
 ## Etap 4 – Zadania cykliczne i I/O
 - [ ] `checkLegacyPlaceholders` przekształcić tak, by wykonywał odczyt pliku w wątku roboczym (np. `taskDispatcher.runAsync`), a na główny wracał tylko z logami.
