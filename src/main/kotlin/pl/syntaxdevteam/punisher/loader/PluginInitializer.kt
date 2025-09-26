@@ -14,6 +14,7 @@ import pl.syntaxdevteam.punisher.commands.CommandManager
 import pl.syntaxdevteam.punisher.common.CommandLoggerPlugin
 import pl.syntaxdevteam.punisher.common.ConfigHandler
 import pl.syntaxdevteam.punisher.common.TaskDispatcher
+import pl.syntaxdevteam.punisher.common.thenOnMainThread
 import pl.syntaxdevteam.punisher.databases.DatabaseHandler
 import pl.syntaxdevteam.punisher.gui.interfaces.GUIHandler
 import pl.syntaxdevteam.punisher.hooks.DiscordWebhook
@@ -23,6 +24,7 @@ import pl.syntaxdevteam.punisher.listeners.ModernLoginListener
 import pl.syntaxdevteam.punisher.listeners.PlayerJoinListener
 import pl.syntaxdevteam.punisher.placeholders.PlaceholderHandler
 import pl.syntaxdevteam.punisher.players.*
+import pl.syntaxdevteam.punisher.metrics.PerformanceMonitor
 import pl.syntaxdevteam.punisher.services.PunishmentService
 import java.io.File
 import java.util.Locale
@@ -86,6 +88,7 @@ class PluginInitializer(private val plugin: PunisherX) {
         plugin.taskDispatcher = TaskDispatcher(plugin)
         plugin.timeHandler = TimeHandler(plugin)
         plugin.punishmentManager = PunishmentManager()
+        plugin.performanceMonitor = PerformanceMonitor(plugin)
         plugin.geoIPHandler = GeoIPHandler(plugin)
         plugin.geoIPHandler.initializeAsync(plugin.taskDispatcher)
         plugin.cache = PunishmentCache(plugin)
@@ -154,51 +157,68 @@ class PluginInitializer(private val plugin: PunisherX) {
         )
         val langFile = candidates.firstOrNull { it.exists() } ?: return
 
+        val dispatcher = plugin.taskDispatcher
         val legacyPattern = Regex("\\{\\w+}")
         val warnMsg =
             "Language file ${langFile.name} uses legacy placeholders with {}. Run /langfix or delete the file to regenerate."
 
-        try {
-            val content = langFile.readText(Charsets.UTF_8)
-            if (!legacyPattern.containsMatchIn(content)) return
-        } catch (e: Exception) {
-            plugin.logger.warning("Could not check language file placeholders: ${e.message}")
-            return
+        fun handleError(throwable: Throwable, afterLog: () -> Unit = {}) {
+            dispatcher.runSync {
+                plugin.logger.warning("Could not check language file placeholders: ${throwable.message}")
+                afterLog()
+            }
         }
 
-        plugin.logger.warning(warnMsg)
-
-        val delay = 20L * 10L
-        if (plugin.server.name.contains("Folia", ignoreCase = true)) {
-            plugin.server.globalRegionScheduler.runAtFixedRate(plugin, { task ->
-                try {
-                    val content = langFile.readText(Charsets.UTF_8)
-                    if (legacyPattern.containsMatchIn(content)) {
-                        plugin.logger.warning(warnMsg)
-                    } else {
-                        task.cancel()
-                    }
-                } catch (e: Exception) {
-                    plugin.logger.warning("Could not check language file placeholders: ${e.message}")
-                    task.cancel()
-                }
-            }, delay, delay)
-        } else {
-            object : BukkitRunnable() {
-                override fun run() {
-                    try {
-                        val content = langFile.readText(Charsets.UTF_8)
-                        if (legacyPattern.containsMatchIn(content)) {
-                            plugin.logger.warning(warnMsg)
-                        } else {
-                            cancel()
+        fun scheduleReminderChecks() {
+            val delay = 20L * 10L
+            if (plugin.server.name.contains("Folia", ignoreCase = true)) {
+                plugin.server.globalRegionScheduler.runAtFixedRate(plugin, { task ->
+                    dispatcher
+                        .supplyAsync { legacyPattern.containsMatchIn(langFile.readText(Charsets.UTF_8)) }
+                        .thenOnMainThread(dispatcher) { hasLegacy ->
+                            if (hasLegacy) {
+                                plugin.logger.warning(warnMsg)
+                            } else {
+                                task.cancel()
+                            }
                         }
-                    } catch (e: Exception) {
-                        plugin.logger.warning("Could not check language file placeholders: ${e.message}")
-                        cancel()
+                        .exceptionally { throwable ->
+                            handleError(throwable) { task.cancel() }
+                            null
+                        }
+                }, delay, delay)
+            } else {
+                object : BukkitRunnable() {
+                    override fun run() {
+                        dispatcher
+                            .supplyAsync { legacyPattern.containsMatchIn(langFile.readText(Charsets.UTF_8)) }
+                            .thenOnMainThread(dispatcher) { hasLegacy ->
+                                if (hasLegacy) {
+                                    plugin.logger.warning(warnMsg)
+                                } else {
+                                    cancel()
+                                }
+                            }
+                            .exceptionally { throwable ->
+                                handleError(throwable) { cancel() }
+                                null
+                            }
                     }
-                }
-            }.runTaskTimer(plugin, delay, delay)
+                }.runTaskTimer(plugin, delay, delay)
+            }
         }
+
+        dispatcher
+            .supplyAsync { legacyPattern.containsMatchIn(langFile.readText(Charsets.UTF_8)) }
+            .thenOnMainThread(dispatcher) { hasLegacy ->
+                if (hasLegacy) {
+                    plugin.logger.warning(warnMsg)
+                    scheduleReminderChecks()
+                }
+            }
+            .exceptionally { throwable ->
+                handleError(throwable)
+                null
+            }
     }
 }

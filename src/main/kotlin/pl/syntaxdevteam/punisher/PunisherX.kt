@@ -29,6 +29,7 @@ import pl.syntaxdevteam.punisher.hooks.HookHandler
 import pl.syntaxdevteam.punisher.loader.PluginInitializer
 import pl.syntaxdevteam.punisher.loader.VersionChecker
 import pl.syntaxdevteam.punisher.listeners.PlayerJoinListener
+import pl.syntaxdevteam.punisher.metrics.PerformanceMonitor
 import pl.syntaxdevteam.punisher.services.PunishmentService
 import java.io.File
 import java.util.*
@@ -61,6 +62,7 @@ class PunisherX : JavaPlugin(), Listener {
     lateinit var versionChecker: VersionChecker
     lateinit var taskDispatcher: TaskDispatcher
     lateinit var punishmentService: PunishmentService
+    lateinit var performanceMonitor: PerformanceMonitor
 
     @Volatile
     private var serverNameCache: String? = null
@@ -100,6 +102,9 @@ class PunisherX : JavaPlugin(), Listener {
         databaseHandler.closeConnection()
         AsyncChatEvent.getHandlerList().unregister(this as Plugin)
         pluginInitializer.onDisable()
+        if (this::performanceMonitor.isInitialized) {
+            performanceMonitor.close()
+        }
         if (this::taskDispatcher.isInitialized) {
             taskDispatcher.close()
         }
@@ -177,6 +182,9 @@ class PunisherX : JavaPlugin(), Listener {
         playerJoinListener = PlayerJoinListener(playerIPManager, punishmentChecker)
         server.pluginManager.registerEvents(playerJoinListener, this)
         server.pluginManager.registerEvents(punishmentChecker, this)
+        if (this::performanceMonitor.isInitialized) {
+            performanceMonitor.refreshFromConfig()
+        }
         refreshServerNameAsync()
     }
 

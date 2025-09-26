@@ -21,9 +21,9 @@
 - [x] Wywołania GeoIP w zdarzeniach (`PlayerJoinEvent`) wykonywać asynchronicznie z timeoutem, a wynik dostarczać na główny wątek dopiero przy zapisie.
 
 ## Etap 4 – Zadania cykliczne i I/O
-- [ ] `checkLegacyPlaceholders` przekształcić tak, by wykonywał odczyt pliku w wątku roboczym (np. `taskDispatcher.runAsync`), a na główny wracał tylko z logami.
-- [ ] Zastanowić się nad przeniesieniem kosztownych operacji czyszczenia baz (`removePunishment` w `getPunishments`) do osobnego zadania harmonogramu.
-- [ ] Dodać metryki czasu wykonania (np. `System.nanoTime()`, integration z `SyntaxCore.statsCollector`) dla najbardziej ruchliwych operacji, aby monitorować postęp.
+- [x] `checkLegacyPlaceholders` przekształcić tak, by wykonywał odczyt pliku w wątku roboczym (np. `taskDispatcher.runAsync`), a na główny wracał tylko z logami.
+- [x] Zastanowić się nad przeniesieniem kosztownych operacji czyszczenia baz (`removePunishment` w `getPunishments`) do osobnego zadania harmonogramu. → Czyszczenie utrzymywane w `PunishmentService.cleanupExpiredPunishments` jako cykliczne zadanie, brak wywołań usuwających w gorącym path `getPunishments`.
+- [x] Dodać metryki czasu wykonania (np. `System.nanoTime()`) dla najbardziej ruchliwych operacji oraz okresowo logować średnie czasy wykonania.
 
 ## Etap 5 – Testy regresyjne i monitoring
 - [ ] Przygotować profil wydajności (np. `/timings`, Spark) przed i po wdrożeniu każdego etapu.
