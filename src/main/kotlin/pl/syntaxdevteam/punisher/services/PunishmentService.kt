@@ -9,6 +9,7 @@ import pl.syntaxdevteam.punisher.common.TaskDispatcher
 import pl.syntaxdevteam.punisher.common.logOnError
 import pl.syntaxdevteam.punisher.databases.DatabaseHandler
 import pl.syntaxdevteam.punisher.databases.PunishmentData
+import pl.syntaxdevteam.punisher.metrics.measure
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
@@ -60,10 +61,12 @@ class PunishmentService(
         }
 
         return dispatcher.supplyAsync {
-            val punishments = databaseHandler.getPunishments(uuid.toString())
-                .filter { plugin.punishmentManager.isPunishmentActive(it) }
-            activePunishmentsCache.put(uuid, punishments)
-            punishments
+            plugin.performanceMonitor.measure("punishments.active.fetch") {
+                val punishments = databaseHandler.getPunishments(uuid.toString())
+                    .filter { plugin.punishmentManager.isPunishmentActive(it) }
+                activePunishmentsCache.put(uuid, punishments)
+                punishments
+            }
         }
     }
 
@@ -136,6 +139,7 @@ class PunishmentService(
         }
 
         restartCleanupTask()
+        plugin.performanceMonitor.refreshFromConfig()
     }
 
     fun shutdown() {
@@ -167,8 +171,15 @@ class PunishmentService(
             return CompletableFuture.completedFuture(cached)
         }
 
+        val metricName = when (key.type) {
+            ListingType.HISTORY -> "punishments.history.list.fetch"
+            ListingType.BAN_ACTIVE -> "punishments.banlist.active.fetch"
+            ListingType.BAN_HISTORY -> "punishments.banlist.history.fetch"
+        }
+
         return dispatcher.supplyAsync {
-            val snapshot = loader().toList()
+            val loaded = plugin.performanceMonitor.measure(metricName) { loader() }
+            val snapshot = loaded.toList()
             listingCache.put(key, snapshot)
             snapshot
         }
@@ -206,7 +217,9 @@ class PunishmentService(
 
     private fun cleanupExpiredPunishments() {
         dispatcher.runAsync {
-            databaseHandler.purgeExpiredPunishments(System.currentTimeMillis())
+            plugin.performanceMonitor.measure("punishments.cleanup.expired") {
+                databaseHandler.purgeExpiredPunishments(System.currentTimeMillis())
+            }
         }.logOnError { throwable ->
             plugin.logger.warning("Failed to purge expired punishments: ${throwable.message}")
         }
