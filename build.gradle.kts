@@ -63,6 +63,8 @@ dependencies {
     compileOnly("com.github.ben-manes.caffeine:caffeine:3.2.2")
 
     testImplementation(kotlin("test"))
+    testImplementation("com.github.seeseemelk:MockBukkit-v1.21:3.133.2")
+    testImplementation("com.github.ben-manes.caffeine:caffeine:3.2.2")
 }
 
 tasks {

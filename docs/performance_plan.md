@@ -26,6 +26,6 @@
 - [x] Dodać metryki czasu wykonania (np. `System.nanoTime()`) dla najbardziej ruchliwych operacji oraz okresowo logować średnie czasy wykonania.
 
 ## Etap 5 – Testy regresyjne i monitoring
-- [ ] Przygotować profil wydajności (np. `/timings`, Spark) przed i po wdrożeniu każdego etapu.
-- [ ] Dodać testy integracyjne dla asynchronicznych ścieżek (mock scheduler) oraz testy jednostkowe cache.
-- [ ] Po wdrożeniu każdego etapu zebrać logi i ocenić wpływ na czas odpowiedzi komend oraz na TPS serwera.
+- [x] Przygotować profil wydajności (np. `/timings`, Spark) przed i po wdrożeniu każdego etapu (zob. `docs/performance_profiles/README.md`).
+- [x] Dodać testy integracyjne dla asynchronicznych ścieżek (mock scheduler) oraz testy jednostkowe cache.
+- [x] Po wdrożeniu każdego etapu zebrać logi i ocenić wpływ na czas odpowiedzi komend oraz na TPS serwera.
