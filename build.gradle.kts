@@ -63,6 +63,7 @@ dependencies {
     compileOnly("com.github.ben-manes.caffeine:caffeine:3.2.2")
 
     testImplementation(kotlin("test"))
+    testImplementation("com.github.ben-manes.caffeine:caffeine:3.2.2")
 }
 
 tasks {

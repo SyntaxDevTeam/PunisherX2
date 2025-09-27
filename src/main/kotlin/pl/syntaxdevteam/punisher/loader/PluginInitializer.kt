@@ -25,6 +25,7 @@ import pl.syntaxdevteam.punisher.listeners.PlayerJoinListener
 import pl.syntaxdevteam.punisher.placeholders.PlaceholderHandler
 import pl.syntaxdevteam.punisher.players.*
 import pl.syntaxdevteam.punisher.metrics.PerformanceMonitor
+import pl.syntaxdevteam.punisher.metrics.PerformanceProfileRepository
 import pl.syntaxdevteam.punisher.services.PunishmentService
 import java.io.File
 import java.util.Locale
@@ -86,9 +87,11 @@ class PluginInitializer(private val plugin: PunisherX) {
         plugin.messageHandler = SyntaxCore.messages
         plugin.pluginsManager = SyntaxCore.pluginManagerx
         plugin.taskDispatcher = TaskDispatcher(plugin)
+        plugin.performanceProfileRepository = PerformanceProfileRepository(plugin.taskDispatcher)
+        plugin.performanceProfileRepository.setSessionBufferingEnabled(plugin.isDebugModeEnabled())
         plugin.timeHandler = TimeHandler(plugin)
         plugin.punishmentManager = PunishmentManager()
-        plugin.performanceMonitor = PerformanceMonitor(plugin)
+        plugin.performanceMonitor = PerformanceMonitor(plugin, plugin.performanceProfileRepository)
         plugin.geoIPHandler = GeoIPHandler(plugin)
         plugin.geoIPHandler.initializeAsync(plugin.taskDispatcher)
         plugin.cache = PunishmentCache(plugin)

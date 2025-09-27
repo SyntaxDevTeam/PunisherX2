@@ -30,8 +30,14 @@ import pl.syntaxdevteam.punisher.loader.PluginInitializer
 import pl.syntaxdevteam.punisher.loader.VersionChecker
 import pl.syntaxdevteam.punisher.listeners.PlayerJoinListener
 import pl.syntaxdevteam.punisher.metrics.PerformanceMonitor
+import pl.syntaxdevteam.punisher.metrics.PerformanceProfileRepository
+import pl.syntaxdevteam.punisher.metrics.PerformanceProfileRepository.CaptureType
 import pl.syntaxdevteam.punisher.services.PunishmentService
 import java.io.File
+import java.nio.charset.StandardCharsets
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.*
 
 class PunisherX : JavaPlugin(), Listener {
@@ -63,6 +69,7 @@ class PunisherX : JavaPlugin(), Listener {
     lateinit var taskDispatcher: TaskDispatcher
     lateinit var punishmentService: PunishmentService
     lateinit var performanceMonitor: PerformanceMonitor
+    lateinit var performanceProfileRepository: PerformanceProfileRepository
 
     @Volatile
     private var serverNameCache: String? = null
@@ -117,6 +124,99 @@ class PunisherX : JavaPlugin(), Listener {
      */
     fun getPluginFile(): File {
         return this.file
+    }
+
+    fun isDebugModeEnabled(): Boolean {
+        return config.getBoolean("debug", false)
+    }
+
+    data class PerformanceSessionDump(
+        val file: File,
+        val entries: Int
+    )
+
+    fun hasBufferedPerformanceSnapshots(): Boolean {
+        if (!this::performanceProfileRepository.isInitialized) {
+            return false
+        }
+        return performanceProfileRepository.hasSessionEntries()
+    }
+
+    fun exportPerformanceSession(clearBuffer: Boolean = true): PerformanceSessionDump? {
+        if (!this::performanceProfileRepository.isInitialized) {
+            return null
+        }
+        val snapshots = if (clearBuffer) {
+            performanceProfileRepository.drainSession()
+        } else {
+            performanceProfileRepository.peekSession()
+        }
+        if (snapshots.isEmpty()) {
+            return null
+        }
+
+        val exportDir = File(dataFolder, "performance")
+        if (!exportDir.exists()) {
+            exportDir.mkdirs()
+        }
+
+        val now = Instant.now()
+        val timestamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT)
+            .format(now.atZone(ZoneId.systemDefault()))
+        val file = File(exportDir, "session-$timestamp.log")
+
+        file.outputStream().writer(StandardCharsets.UTF_8).use { writer ->
+            writer.appendLine("# PunisherX performance session dump")
+            writer.appendLine("# Generated at ${DateTimeFormatter.ISO_INSTANT.format(now)}")
+            writer.appendLine("# Debug mode: ${isDebugModeEnabled()}")
+            writer.appendLine("# Entries captured: ${snapshots.size}")
+            writer.appendLine()
+
+            snapshots.groupBy { it.stage }
+                .toSortedMap()
+                .forEach { (stage, stageSnapshots) ->
+                    writer.appendLine("## Stage: $stage")
+                    val sortedStageSnapshots = stageSnapshots.sortedBy { it.sequence }
+                    val before = sortedStageSnapshots.lastOrNull { it.captureType == CaptureType.BEFORE }
+                    val after = sortedStageSnapshots.lastOrNull { it.captureType == CaptureType.AFTER }
+                    if (before != null && after != null) {
+                        val tpsDelta = formatDouble(after.tps - before.tps, "%.3f")
+                        val latencyDelta = formatDouble(after.commandLatencyMillis - before.commandLatencyMillis, "%.3f")
+                        writer.appendLine("Summary: ΔTPS=$tpsDelta | ΔLatency=$latencyDelta ms (latest before/after)")
+                    }
+
+                    sortedStageSnapshots.forEach { snapshot ->
+                        val captured = DateTimeFormatter.ISO_INSTANT.format(snapshot.capturedAt)
+                        val tpsValue = formatDouble(snapshot.tps, "%.3f")
+                        val latencyValue = formatDouble(snapshot.commandLatencyMillis, "%.3f")
+                        writer.appendLine("  - [${snapshot.captureType}] @ $captured | TPS=$tpsValue | Latency=$latencyValue ms")
+                        snapshot.notes?.takeIf { it.isNotBlank() }?.let { notes ->
+                            writer.appendLine("    Notes: ${notes.replace('\n', ' ')}")
+                        }
+                    }
+                    writer.appendLine()
+                }
+        }
+
+        return PerformanceSessionDump(file, snapshots.size)
+    }
+
+    fun recordPerformanceProfile(
+        stage: String,
+        captureType: CaptureType,
+        tps: Double,
+        commandLatencyMillis: Double,
+        notes: String? = null
+    ) {
+        if (!this::performanceProfileRepository.isInitialized) {
+            return
+        }
+        performanceProfileRepository
+            .recordAsync(stage, captureType, tps, commandLatencyMillis, notes)
+            .exceptionally { throwable ->
+                logger.debug("Unable to persist performance profile for $stage: ${throwable.message}")
+                null
+            }
     }
 
     fun resolvePlayerUuid(identifier: String): UUID {
@@ -185,6 +285,9 @@ class PunisherX : JavaPlugin(), Listener {
         if (this::performanceMonitor.isInitialized) {
             performanceMonitor.refreshFromConfig()
         }
+        if (this::performanceProfileRepository.isInitialized) {
+            performanceProfileRepository.setSessionBufferingEnabled(isDebugModeEnabled())
+        }
         refreshServerNameAsync()
     }
 
@@ -226,5 +329,13 @@ class PunisherX : JavaPlugin(), Listener {
         }.onFailure {
             logger.debug("Property 'server-name' could not be read: ${it.message}")
         }.getOrDefault("Unknown Server")
+    }
+}
+
+private fun formatDouble(value: Double, pattern: String): String {
+    return if (value.isNaN()) {
+        "N/A"
+    } else {
+        String.format(Locale.ROOT, pattern, value)
     }
 }

@@ -177,6 +177,8 @@ update:
 
 
 # Debug mode: when true, provides more detailed console logs.
+# It also keeps runtime performance metrics in memory so that
+# /prx dump can export a session log.
 debug: false
 
 # Should StatsCollector be enabled? Recommended: true.

@@ -6,7 +6,9 @@ import io.papermc.paper.plugin.lifecycle.event.LifecycleEventOwner
 import org.jetbrains.annotations.NotNull
 import pl.syntaxdevteam.punisher.PunisherX
 import pl.syntaxdevteam.core.database.DatabaseType
+import pl.syntaxdevteam.punisher.common.thenOnMainThread
 import pl.syntaxdevteam.punisher.permissions.PermissionChecker
+import kotlin.io.path.relativeTo
 
 class PunishesXCommands(private val plugin: PunisherX) : BasicCommand {
     private val mH = plugin.messageHandler
@@ -47,6 +49,54 @@ class PunishesXCommands(private val plugin: PunisherX) : BasicCommand {
                         "\n<gray>-------------------------------------------------"
                     )
                 )
+            }
+
+            args[0].equals("dump", ignoreCase = true) -> {
+                if (!plugin.isDebugModeEnabled()) {
+                    stack.sender.sendMessage(
+                        mH.miniMessageFormat("$prefix <yellow>Enable debug mode in config.yml to buffer performance metrics.</yellow>")
+                    )
+                    return
+                }
+
+                if (!plugin.hasBufferedPerformanceSnapshots()) {
+                    stack.sender.sendMessage(
+                        mH.miniMessageFormat("$prefix <yellow>No buffered performance metrics to export yet.</yellow>")
+                    )
+                    return
+                }
+
+                plugin.taskDispatcher
+                    .supplyAsync { plugin.exportPerformanceSession() }
+                    .whenComplete { _, throwable ->
+                        if (throwable != null) {
+                            plugin.logger.err("Failed to export performance session: ${throwable.message}")
+                            plugin.taskDispatcher.runSync {
+                                stack.sender.sendMessage(
+                                    mH.miniMessageFormat("$prefix <red>Could not dump performance metrics. Check logs for details.</red>")
+                                )
+                            }
+                        }
+                    }
+                    .thenOnMainThread(plugin.taskDispatcher) { dump ->
+                        if (dump == null) {
+                            stack.sender.sendMessage(
+                                mH.miniMessageFormat("$prefix <yellow>No buffered performance metrics to export yet.</yellow>")
+                            )
+                            return@thenOnMainThread
+                        }
+
+                        val relativePath = runCatching {
+                            dump.file.toPath().relativeTo(plugin.dataFolder.toPath()).toString()
+                        }.getOrDefault(dump.file.name)
+
+                        stack.sender.sendMessage(
+                            mH.miniMessageFormat(
+                                "$prefix <green>Saved performance session (${dump.entries} entries) to <gold>${relativePath.replace('\\', '/')}</gold>.</green>"
+                            )
+                        )
+                    }
+                return
             }
 
             args[0].equals("reload", ignoreCase = true) -> {
@@ -122,6 +172,7 @@ class PunishesXCommands(private val plugin: PunisherX) : BasicCommand {
             "  <gold>/prx help <gray>- <white>Displays this prompt.", // zmienione /punisherx → /prx
             "  <gold>/prx version <gray>- <white>Shows plugin info.",
             "  <gold>/prx reload <gray>- <white>Reloads the configuration file.",
+            "  <gold>/prx dump <gray>- <white>Exports buffered debug metrics to a session log.",
             "  <gold>/kick <player> <reason> <gray>- <white>Kicks a player from the server",
             "  <gold>/warn <player> (time) <reason> <gray>- <white>Warns a player.",
             "  <gold>/unwarn <player> <gray>- <white>Removes a player's warning.",
@@ -201,6 +252,9 @@ class PunishesXCommands(private val plugin: PunisherX) : BasicCommand {
                     if (cmd.startsWith(args[0], ignoreCase = true)) {
                         baseSuggestions.add(cmd)
                     }
+                }
+                if (plugin.isDebugModeEnabled() && "dump".startsWith(args[0], ignoreCase = true)) {
+                    baseSuggestions.add("dump")
                 }
                 if ("migrate".startsWith(args[0], ignoreCase = true)) {
                     baseSuggestions.add("migrate")

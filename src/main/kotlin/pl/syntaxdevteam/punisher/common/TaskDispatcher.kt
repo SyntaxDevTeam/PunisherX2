@@ -1,7 +1,7 @@
 package pl.syntaxdevteam.punisher.common
 
 import org.bukkit.Bukkit
-import pl.syntaxdevteam.punisher.PunisherX
+import org.bukkit.plugin.Plugin
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
@@ -12,7 +12,13 @@ import java.util.concurrent.TimeUnit
  * Coordinates asynchronous work for the plugin while respecting the Bukkit
  * threading model and Folia's schedulers.
  */
-class TaskDispatcher(private val plugin: PunisherX) : AutoCloseable {
+interface TaskExecutor : AutoCloseable {
+    fun runAsync(task: () -> Unit): CompletableFuture<Void>
+    fun <T> supplyAsync(task: () -> T): CompletableFuture<T>
+    fun runSync(task: () -> Unit)
+}
+
+class TaskDispatcher(private val plugin: Plugin) : TaskExecutor {
 
     private val asyncExecutor: ExecutorService = Executors.newFixedThreadPool(
         determinePoolSize(),
@@ -41,15 +47,15 @@ class TaskDispatcher(private val plugin: PunisherX) : AutoCloseable {
         }
     }
 
-    fun runAsync(task: () -> Unit): CompletableFuture<Void> {
+    override fun runAsync(task: () -> Unit): CompletableFuture<Void> {
         return CompletableFuture.runAsync(task, asyncExecutor)
     }
 
-    fun <T> supplyAsync(task: () -> T): CompletableFuture<T> {
+    override fun <T> supplyAsync(task: () -> T): CompletableFuture<T> {
         return CompletableFuture.supplyAsync(task, asyncExecutor)
     }
 
-    fun runSync(task: () -> Unit) {
+    override fun runSync(task: () -> Unit) {
         syncExecutor.execute(task)
     }
 
@@ -61,7 +67,7 @@ class TaskDispatcher(private val plugin: PunisherX) : AutoCloseable {
     }
 }
 
-fun <T> CompletableFuture<T>.thenOnMainThread(dispatcher: TaskDispatcher, consumer: (T) -> Unit): CompletableFuture<Void> {
+fun <T> CompletableFuture<T>.thenOnMainThread(dispatcher: TaskExecutor, consumer: (T) -> Unit): CompletableFuture<Void> {
     return this.thenAccept { result ->
         dispatcher.runSync { consumer(result) }
     }
