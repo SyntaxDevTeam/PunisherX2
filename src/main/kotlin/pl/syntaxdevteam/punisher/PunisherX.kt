@@ -30,6 +30,8 @@ import pl.syntaxdevteam.punisher.loader.PluginInitializer
 import pl.syntaxdevteam.punisher.loader.VersionChecker
 import pl.syntaxdevteam.punisher.listeners.PlayerJoinListener
 import pl.syntaxdevteam.punisher.metrics.PerformanceMonitor
+import pl.syntaxdevteam.punisher.metrics.PerformanceProfileRepository
+import pl.syntaxdevteam.punisher.metrics.PerformanceProfileRepository.CaptureType
 import pl.syntaxdevteam.punisher.services.PunishmentService
 import java.io.File
 import java.util.*
@@ -63,6 +65,7 @@ class PunisherX : JavaPlugin(), Listener {
     lateinit var taskDispatcher: TaskDispatcher
     lateinit var punishmentService: PunishmentService
     lateinit var performanceMonitor: PerformanceMonitor
+    lateinit var performanceProfileRepository: PerformanceProfileRepository
 
     @Volatile
     private var serverNameCache: String? = null
@@ -117,6 +120,24 @@ class PunisherX : JavaPlugin(), Listener {
      */
     fun getPluginFile(): File {
         return this.file
+    }
+
+    fun recordPerformanceProfile(
+        stage: String,
+        captureType: CaptureType,
+        tps: Double,
+        commandLatencyMillis: Double,
+        notes: String? = null
+    ) {
+        if (!this::performanceProfileRepository.isInitialized) {
+            return
+        }
+        performanceProfileRepository
+            .recordAsync(stage, captureType, tps, commandLatencyMillis, notes)
+            .exceptionally { throwable ->
+                logger.debug("Unable to persist performance profile for $stage: ${throwable.message}")
+                null
+            }
     }
 
     fun resolvePlayerUuid(identifier: String): UUID {
