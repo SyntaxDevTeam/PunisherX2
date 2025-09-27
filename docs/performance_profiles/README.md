@@ -30,3 +30,23 @@ profilera Spark oraz metryk zbieranych przez `PerformanceMonitor`.
   wątku, dzięki czemu TPS ustabilizował się na 20.0.
 - Dodatkowe testy regresyjne i monitoring z etapu 5 nie zmieniły TPS, ale
   zmniejszyły wariancję czasu odpowiedzi komend o ok. 3 ms.
+
+## Jak wykonywać pomiary na żywym serwerze
+
+Dołączony do pluginu `PerformanceMonitor` działa również poza środowiskiem
+deweloperskim. Wystarczy pozostawić aktywną domyślną konfigurację
+`performance.metrics.enabled` (korzysta ona z flagi `stats.enabled`), aby
+zarejestrowane w kodzie wywołania `monitor.measure("nazwa")` były okresowo
+zrzucane do logów i repozytorium profili. `PluginInitializer` inicjalizuje
+`PerformanceProfileRepository` wraz z `TaskDispatcherem`, więc w środowisku
+serwera produkcyjnego snapshoty będą wysyłane asynchronicznie, bez blokowania
+głównego wątku gry.
+
+Jeżeli chcesz oznaczać konkretne punkty kontrolne (np. „pomiar przed/po
+wdrożeniu poprawki”) na działającym serwerze, możesz skorzystać z metody
+`PunisherX.recordPerformanceProfile(stage, captureType, ...)` — wywołania te są
+w pełni bezpieczne w trakcie pracy serwera, bo zapis trafia do cache
+`PerformanceProfileRepository` aktualizowanego asynchronicznie. Dzięki temu
+nie ma potrzeby budowania specjalnej wersji pluginu tylko do testów —
+wystarczy, że do istniejącej instalacji dodasz jednorazowy command lub
+przyciski w panelu administracyjnym, które skorzystają z powyższego API.
