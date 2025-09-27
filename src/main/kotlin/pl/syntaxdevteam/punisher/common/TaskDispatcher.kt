@@ -1,7 +1,7 @@
 package pl.syntaxdevteam.punisher.common
 
 import org.bukkit.Bukkit
-import pl.syntaxdevteam.punisher.PunisherX
+import org.bukkit.plugin.Plugin
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit
  * Coordinates asynchronous work for the plugin while respecting the Bukkit
  * threading model and Folia's schedulers.
  */
-class TaskDispatcher(private val plugin: PunisherX) : AutoCloseable {
+class TaskDispatcher(private val plugin: Plugin) : AutoCloseable {
 
     private val asyncExecutor: ExecutorService = Executors.newFixedThreadPool(
         determinePoolSize(),

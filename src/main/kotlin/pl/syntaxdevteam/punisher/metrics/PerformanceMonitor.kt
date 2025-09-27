@@ -3,12 +3,14 @@ package pl.syntaxdevteam.punisher.metrics
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask
 import org.bukkit.scheduler.BukkitTask
 import pl.syntaxdevteam.punisher.PunisherX
+import pl.syntaxdevteam.punisher.metrics.PerformanceProfileRepository.CaptureType
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.LongAdder
 
 class PerformanceMonitor(
-    private val plugin: PunisherX
+    private val plugin: PunisherX,
+    private val profileRepository: PerformanceProfileRepository? = null
 ) : AutoCloseable {
 
     private data class MetricAccumulator(
@@ -134,11 +136,30 @@ class PerformanceMonitor(
         val averageMillis = snapshot.totalNanos.toDouble() / snapshot.invocations / 1_000_000.0
         val formatted = String.format(Locale.ROOT, "%.3f", averageMillis)
         plugin.logger.debug("[Performance] ${snapshot.metricName} avg=${formatted}ms calls=${snapshot.invocations}")
+        profileRepository
+            ?.recordAsync(
+                stage = "runtime:${snapshot.metricName}",
+                captureType = CaptureType.RUNTIME,
+                tps = readServerTps() ?: Double.NaN,
+                commandLatencyMillis = averageMillis,
+                notes = "invocations=${snapshot.invocations}"
+            )
+            ?.exceptionally { throwable ->
+                plugin.logger.debug("Could not store runtime snapshot for ${snapshot.metricName}: ${throwable.message}")
+                null
+            }
     }
 
     override fun close() {
         cancelFlushTask()
         metrics.clear()
+    }
+
+    private fun readServerTps(): Double? {
+        return runCatching {
+            val method = plugin.server::class.java.getMethod("getTPS")
+            (method.invoke(plugin.server) as? DoubleArray)?.firstOrNull()
+        }.getOrNull()
     }
 
     data class MetricSnapshot(
